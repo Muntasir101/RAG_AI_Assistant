@@ -2,9 +2,10 @@
 FastAPI backend for RAG AI Decision Assistant
 Provides REST API endpoints for question-answering with session management
 """
+import json
 import logging
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, Optional
 
 from fastapi import FastAPI, HTTPException, status
@@ -15,6 +16,14 @@ from pydantic import BaseModel, Field
 
 from retriever import get_answer
 from config import settings
+
+# Redis import with fallback
+try:
+    import redis
+    REDIS_AVAILABLE = True
+except ImportError:
+    REDIS_AVAILABLE = False
+    logging.warning("Redis not available. Install with: pip install redis")
 
 # Configure logging
 logging.basicConfig(
@@ -42,8 +51,100 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# In-memory session storage (for MVP - use Redis in production)
-sessions: Dict[str, Dict] = {}
+# Redis client (with fallback to in-memory)
+_redis_client = None
+_fallback_sessions: Dict[str, Dict] = {}  # Fallback if Redis unavailable
+SESSION_TTL = 86400  # 24 hours in seconds
+
+
+def get_redis_client():
+    """Get or create Redis client"""
+    global _redis_client
+    
+    if not REDIS_AVAILABLE:
+        return None
+    
+    if _redis_client is not None:
+        return _redis_client
+    
+    try:
+        _redis_client = redis.Redis(
+            host=settings.redis_host,
+            port=settings.redis_port,
+            db=settings.redis_db,
+            password=settings.redis_password if settings.redis_password else None,
+            ssl=settings.redis_ssl,
+            decode_responses=settings.redis_decode_responses,
+            socket_connect_timeout=5,
+            socket_timeout=5,
+            retry_on_timeout=True
+        )
+        # Test connection
+        _redis_client.ping()
+        logger.info(f"Connected to Redis at {settings.redis_host}:{settings.redis_port}")
+        return _redis_client
+    except Exception as e:
+        logger.warning(f"Redis connection failed: {str(e)}. Using in-memory storage.")
+        _redis_client = None
+        return None
+
+
+def get_session(session_id: str) -> Optional[Dict]:
+    """Get session from Redis or fallback storage"""
+    redis_client = get_redis_client()
+    
+    if redis_client:
+        try:
+            data = redis_client.get(f"session:{session_id}")
+            if data:
+                return json.loads(data)
+        except Exception as e:
+            logger.error(f"Error reading from Redis: {str(e)}")
+            # Fallback to in-memory
+            return _fallback_sessions.get(session_id)
+    else:
+        return _fallback_sessions.get(session_id)
+
+
+def save_session(session_id: str, session_data: Dict) -> None:
+    """Save session to Redis or fallback storage"""
+    redis_client = get_redis_client()
+    
+    if redis_client:
+        try:
+            redis_client.setex(
+                f"session:{session_id}",
+                SESSION_TTL,
+                json.dumps(session_data)
+            )
+        except Exception as e:
+            logger.error(f"Error writing to Redis: {str(e)}")
+            # Fallback to in-memory
+            _fallback_sessions[session_id] = session_data
+    else:
+        _fallback_sessions[session_id] = session_data
+
+
+def delete_session(session_id: str) -> bool:
+    """Delete session from Redis or fallback storage"""
+    redis_client = get_redis_client()
+    
+    if redis_client:
+        try:
+            deleted = redis_client.delete(f"session:{session_id}")
+            return deleted > 0
+        except Exception as e:
+            logger.error(f"Error deleting from Redis: {str(e)}")
+            # Fallback to in-memory
+            if session_id in _fallback_sessions:
+                del _fallback_sessions[session_id]
+                return True
+            return False
+    else:
+        if session_id in _fallback_sessions:
+            del _fallback_sessions[session_id]
+            return True
+        return False
 
 
 class QueryRequest(BaseModel):
@@ -79,14 +180,17 @@ def get_or_create_session(session_id: Optional[str] = None) -> str:
     Returns:
         Session ID string
     """
-    if session_id and session_id in sessions:
-        return session_id
+    if session_id:
+        existing_session = get_session(session_id)
+        if existing_session:
+            return session_id
     
     new_session_id = str(uuid.uuid4())
-    sessions[new_session_id] = {
+    session_data = {
         "created_at": datetime.utcnow().isoformat(),
         "messages": []
     }
+    save_session(new_session_id, session_data)
     return new_session_id
 
 
@@ -113,9 +217,19 @@ async def health_check():
         from retriever import load_vector_store
         load_vector_store()
         
+        # Check Redis connection
+        redis_status = "not configured (using in-memory)"
+        redis_client = get_redis_client()
+        if redis_client:
+            try:
+                redis_client.ping()
+                redis_status = "connected"
+            except Exception as e:
+                redis_status = f"disconnected: {str(e)} (using fallback)"
+        
         return {
             "status": "healthy",
-            "message": "System is operational and knowledge base is loaded",
+            "message": f"System is operational. Knowledge base loaded. Redis: {redis_status}",
             "timestamp": datetime.utcnow().isoformat()
         }
     except Exception as e:
@@ -155,12 +269,18 @@ async def ask(query: QueryRequest):
         logger.info(f"Processing question for session {session_id}")
         result = get_answer(query.question, user_id=query.user_id or session_id)
         
-        # Store in session history
-        sessions[session_id]["messages"].append({
+        # Update session history
+        session_data = get_session(session_id) or {
+            "created_at": datetime.utcnow().isoformat(),
+            "messages": []
+        }
+        session_data["messages"].append({
             "question": query.question,
             "answer": result["answer"],
             "timestamp": datetime.utcnow().isoformat()
         })
+        session_data["updated_at"] = datetime.utcnow().isoformat()
+        save_session(session_id, session_data)
         
         # Return structured response
         return QueryResponse(
@@ -182,22 +302,25 @@ async def ask(query: QueryRequest):
 
 
 @app.get("/sessions/{session_id}")
-async def get_session(session_id: str):
+async def get_session_endpoint(session_id: str):
     """Get session history"""
-    if session_id not in sessions:
+    session_data = get_session(session_id)
+    
+    if not session_data:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Session not found"
         )
     
-    return sessions[session_id]
+    return session_data
 
 
 @app.delete("/sessions/{session_id}")
-async def delete_session(session_id: str):
+async def delete_session_endpoint(session_id: str):
     """Delete a session"""
-    if session_id in sessions:
-        del sessions[session_id]
+    deleted = delete_session(session_id)
+    
+    if deleted:
         return {"message": "Session deleted successfully"}
     else:
         raise HTTPException(

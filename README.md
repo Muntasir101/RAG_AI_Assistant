@@ -289,6 +289,11 @@ See [DEPLOYMENT.md](DEPLOYMENT.md) for detailed deployment instructions.
 | `DATA_DIR` | Knowledge base directory | `knowledge_data` |
 | `INDEX_FILE` | FAISS index file | `faiss_index.pkl` |
 | `TELEGRAM_BOT_TOKEN` | Telegram bot token (optional) | - |
+| `REDIS_HOST` | Redis server host | `localhost` |
+| `REDIS_PORT` | Redis server port | `6379` |
+| `REDIS_DB` | Redis database number | `0` |
+| `REDIS_PASSWORD` | Redis password (optional) | - |
+| `REDIS_SSL` | Enable SSL for Redis | `false` |
 | `LOG_LEVEL` | Logging level | `INFO` |
 
 ### Anti-Hallucination Measures
@@ -369,6 +374,12 @@ curl -X POST http://localhost:8000/ask \
 - **Primary**: OpenAI embeddings (if API key available)
 - **Fallback**: Local HuggingFace embeddings (automatic if OpenAI quota exceeded)
 - **Model**: `paraphrase-multilingual-MiniLM-L12-v2` (supports English and Russian)
+
+### Session Storage
+- **Primary**: Redis (persistent, scalable, shared across instances)
+- **Fallback**: In-memory storage (automatic if Redis unavailable)
+- **TTL**: Sessions expire after 24 hours
+- **Setup**: See [REDIS_SETUP.md](REDIS_SETUP.md) for detailed instructions
 
 ## 📝 API Endpoints
 
@@ -451,7 +462,7 @@ python ingest.py  # Re-run ingestion
 - [x] Multi-provider support (OpenAI, DeepSeek, Gemini)
 - [x] Local embeddings fallback
 - [x] Web UI interface
-- [ ] Redis for session storage
+- [x] Redis for session storage
 - [ ] Advanced caching
 - [ ] Multi-tenant support
 - [ ] Analytics and usage tracking

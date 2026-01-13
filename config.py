@@ -33,6 +33,14 @@ class Settings(BaseSettings):
     # Telegram Bot Configuration
     telegram_bot_token: Optional[str] = None
     
+    # Redis Configuration
+    redis_host: str = "localhost"
+    redis_port: int = 6379
+    redis_db: int = 0
+    redis_password: Optional[str] = None
+    redis_ssl: bool = False
+    redis_decode_responses: bool = True
+    
     # API Configuration
     api_host: str = "0.0.0.0"
     api_port: int = 8000
