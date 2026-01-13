@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Decision Assistant</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>AI Decision Assistant</h1>
+            <p class="subtitle">AI-powered decision support system based on knowledge base</p>
+            <div class="header-badge">
+                <span class="badge-item">RAG-Powered</span>
+                <span class="badge-item">Knowledge-Based</span>
+                <span class="badge-item">Real-Time</span>
+            </div>
+        </header>
+
+        <div class="chat-container">
+            <div class="chat-messages" id="chatMessages">
+                <div class="message bot-message">
+                    <div class="message-content">
+                        <p>Hello! I'm your AI decision assistant. Ask me questions and I'll provide answers based on the knowledge base.</p>
+                        <p class="message-hint">Ask me anything from the knowledge base, and I'll provide evidence-based answers.</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="chat-input-container">
+                <form id="chatForm" class="chat-form">
+                    <input 
+                        type="text" 
+                        id="questionInput" 
+                        class="chat-input" 
+                        placeholder="Ask a question about decision-making strategies..."
+                        autocomplete="off"
+                        required
+                    >
+                    <button type="submit" id="sendButton" class="send-button">
+                        <span class="send-icon">➤</span>
+                    </button>
+                </form>
+                <div class="input-hint">
+                    Press Enter to send
+                </div>
+            </div>
+        </div>
+
+        <div class="info-panel" id="infoPanel" style="display: none;">
+            <div class="info-header">
+                <h3>Answer Details</h3>
+                <button class="close-button" onclick="toggleInfoPanel()">×</button>
+            </div>
+            <div class="info-content">
+                <div class="confidence-badge" id="confidenceBadge">
+                    <span>Confidence: <strong id="confidenceValue">0%</strong></span>
+                </div>
+                <div class="sources-section" id="sourcesSection">
+                    <h4>Sources</h4>
+                    <div id="sourcesList"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <footer>
+        <div class="footer-content">
+            <p class="footer-main">Powered by RAG (Retrieval-Augmented Generation)</p>
+            <p class="footer-sub">Answers are generated exclusively from the knowledge base • No hallucinations</p>
+        </div>
+    </footer>
+
+    <script src="/static/script.js"></script>
+</body>
+</html>
