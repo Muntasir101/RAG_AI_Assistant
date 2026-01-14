@@ -4,7 +4,7 @@ A specialized AI decision assistant built with Retrieval-Augmented Generation (R
 
 **Current Status**: ✅ Fully operational with Gemini 3 Flash Preview, local embeddings, and multi-provider support.
 
-## 🎯 Key Features
+##  Key Features
 
 - **RAG-Based Architecture**: Answers only from provided knowledge base (no hallucinations)
 - **Multi-Provider Support**: Works with OpenAI, DeepSeek, or Google Gemini
@@ -14,7 +14,7 @@ A specialized AI decision assistant built with Retrieval-Augmented Generation (R
 - **Triple Interface**: Web UI, REST API, and Telegram bot
 - **Production Ready**: Docker support, error handling, logging
 
-## 🏗️ Architecture
+##  Architecture
 
 ```
 ┌─────────────────┐
@@ -69,7 +69,7 @@ A specialized AI decision assistant built with Retrieval-Augmented Generation (R
    - Environment variable management
    - Pydantic settings validation
 
-## 🚀 Quick Start
+##  Quick Start
 
 ### Prerequisites
 
@@ -253,7 +253,7 @@ curl -X POST http://localhost:8000/ask \
 4. Run `python bot.py`
 5. Start chatting with your bot
 
-## 🐳 Docker Deployment
+##  Docker Deployment
 
 ```bash
 # Build and run with Docker Compose
@@ -268,7 +268,7 @@ docker-compose down
 
 See [DEPLOYMENT.md](DEPLOYMENT.md) for detailed deployment instructions.
 
-## 🔧 Configuration
+##  Configuration
 
 ### Environment Variables
 
@@ -304,7 +304,7 @@ See [DEPLOYMENT.md](DEPLOYMENT.md) for detailed deployment instructions.
 4. **Confidence Scoring**: Indicates answer reliability
 5. **Context Limitation**: Only answers from retrieved knowledge base chunks
 
-## 📁 Project Structure
+##  Project Structure
 
 ```
 Rag_AI_Assistant/
@@ -340,7 +340,7 @@ curl -X POST http://localhost:8000/ask \
   -d '{"question": "Test question"}'
 ```
 
-## 🔒 Security
+##  Security
 
 - ✅ Environment variables for secrets
 - ✅ `.gitignore` to prevent committing sensitive files
@@ -350,7 +350,7 @@ curl -X POST http://localhost:8000/ask \
 - ✅ Local embeddings fallback (no API dependency for embeddings)
 - ⚠️ **Production**: Restrict CORS origins, enable HTTPS, use firewall
 
-## 🤖 Supported AI Providers
+## Supported AI Providers
 
 ### Google Gemini (Recommended)
 - **Model**: `gemini-3-flash-preview` (default)
@@ -381,7 +381,7 @@ curl -X POST http://localhost:8000/ask \
 - **TTL**: Sessions expire after 24 hours
 - **Setup**: See [REDIS_SETUP.md](REDIS_SETUP.md) for detailed instructions
 
-## 📝 API Endpoints
+## API Endpoints
 
 ### `GET /`
 Health check endpoint
@@ -418,7 +418,7 @@ Get session history
 ### `DELETE /sessions/{session_id}`
 Delete a session
 
-## 🐛 Troubleshooting
+##  Troubleshooting
 
 ### Index file not found
 ```bash
@@ -457,7 +457,7 @@ python ingest.py  # Re-run ingestion
 - Use smaller embedding model
 - Consider FAISS-GPU for faster processing
 
-## 🚧 Future Enhancements
+## Future Enhancements
 
 - [x] Multi-provider support (OpenAI, DeepSeek, Gemini)
 - [x] Local embeddings fallback
@@ -469,21 +469,21 @@ python ingest.py  # Re-run ingestion
 - [ ] Fine-tuning on domain-specific data
 - [ ] Additional embedding providers (Cohere, HuggingFace Inference API)
 
-## 📄 License
+## License
 
 [Your License Here]
 
-## 👥 Contributing
+##  Contributing
 
 [Your Contributing Guidelines Here]
 
-## 📧 Support
+## Support
 
 For issues and questions, please open an issue in the repository.
 
 ---
 
-## 📊 Current System Status
+## Current System Status
 
 - ✅ **Knowledge Base**: 6 documents indexed (31 chunks)
 - ✅ **Embeddings**: Local HuggingFace (multilingual)
@@ -492,14 +492,7 @@ For issues and questions, please open an issue in the repository.
 - ✅ **API Server**: FastAPI on port 8000
 - ✅ **Languages**: English and Russian supported
 
-## 🎓 Example Questions
 
-Try asking:
-- "When should I use a jump serve?"
-- "Что делать при счете 24-24?" (Russian)
-- "How do I decide when to substitute a player?"
-- "What are the responsibilities of a libero?"
-- "When should I call a timeout?"
 
 ---
 
