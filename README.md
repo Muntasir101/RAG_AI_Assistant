@@ -1,6 +1,6 @@
 # RAG AI Decision Assistant for Volleyball Athletes
 
-A specialized AI decision assistant built with Retrieval-Augmented Generation (RAG) that provides evidence-based answers exclusively from a knowledge base. Designed specifically for volleyball athletes, supporting both Russian and English languages.
+A specialized AI decision assistant built with Retrieval-Augmented Generation (RAG) that provides evidence-based answers exclusively from a knowledge base. 
 
 **Current Status**: ✅ Fully operational with Gemini 3 Flash Preview, local embeddings, and multi-provider support.
 
