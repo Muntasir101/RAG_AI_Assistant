@@ -31,10 +31,10 @@ ENV/
 env/
 .venv
 
-# FAISS index files
+# FAISS index and generated data
 *.pkl
-faiss_index.pkl
 *.index
+data/
 
 # Knowledge base data (optional - uncomment if you don't want to track data files)
 # knowledge_data/

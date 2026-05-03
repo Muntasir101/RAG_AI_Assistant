@@ -194,6 +194,7 @@ def ingest_knowledge_base() -> None:
     # Save FAISS index
     logger.info(f"Saving index to {settings.index_file}...")
     try:
+        Path(settings.index_file).parent.mkdir(parents=True, exist_ok=True)
         with open(settings.index_file, "wb") as f:
             pickle.dump(vector_store, f)
         logger.info(f"Index saved successfully ({Path(settings.index_file).stat().st_size / 1024 / 1024:.2f} MB)")

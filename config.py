@@ -26,12 +26,9 @@ class Settings(BaseSettings):
     
     # Google Gemini Configuration
     gemini_api_key: str = ""  # Set in .env file
-    gemini_model: str = "gemini-3-flash-preview"  # Available models: gemini-3-flash-preview, gemini-2.0-flash, gemini-2.5-flash
+    gemini_model: str = "gemini-3-flash-preview"
     
     temperature: float = 0.0
-    
-    # Telegram Bot Configuration
-    telegram_bot_token: Optional[str] = None
     
     # Redis Configuration
     redis_host: str = "localhost"
@@ -52,7 +49,7 @@ class Settings(BaseSettings):
     
     # Data Configuration
     data_dir: str = "knowledge_data"
-    index_file: str = "faiss_index.pkl"
+    index_file: str = "data/faiss_index.pkl"
     
     # Logging
     log_level: str = "INFO"

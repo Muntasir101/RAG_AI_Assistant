@@ -4,7 +4,6 @@
 
 - Python 3.11+ or Docker
 - OpenAI API key
-- Telegram Bot Token (if using Telegram bot)
 - Knowledge base documents (PDF, DOCX, TXT, MD)
 
 ## Local Development Setup
@@ -31,9 +30,6 @@ Create a `.env` file in the project root:
 ```bash
 # OpenAI API Configuration
 OPENAI_API_KEY=your_openai_api_key_here
-
-# Telegram Bot Configuration (optional)
-TELEGRAM_BOT_TOKEN=your_telegram_bot_token_here
 
 # API Configuration
 API_HOST=0.0.0.0
@@ -90,20 +86,6 @@ python app.py
 uvicorn app:app --host 0.0.0.0 --port 8000
 ```
 
-**Option B: Telegram Bot only**
-```bash
-python bot.py
-```
-
-**Option C: Both (separate terminals)**
-```bash
-# Terminal 1
-python app.py
-
-# Terminal 2
-python bot.py
-```
-
 ## Docker Deployment
 
 ### 1. Build and Run with Docker Compose
@@ -136,13 +118,6 @@ docker run -d \
   --env-file .env \
   rag-ai-assistant
 
-# Run Bot
-docker run -d \
-  --name rag-bot \
-  -v $(pwd)/knowledge_data:/app/knowledge_data \
-  -v $(pwd)/faiss_index.pkl:/app/faiss_index.pkl \
-  --env-file .env \
-  rag-ai-assistant python bot.py
 ```
 
 ## Cloud Deployment
@@ -214,9 +189,6 @@ npm install -g pm2
 # Start API
 pm2 start app.py --name rag-api --interpreter python3
 
-# Start Bot
-pm2 start bot.py --name rag-bot --interpreter python3
-
 # Save PM2 configuration
 pm2 save
 pm2 startup
@@ -268,11 +240,6 @@ python ingest.py
 - Check API key is correct
 - Verify API quota/limits
 - Check network connectivity
-
-### Telegram bot not responding
-- Verify bot token
-- Check API is running and accessible
-- Review bot logs
 
 ### Memory issues
 - Reduce `CHUNK_SIZE` and `TOP_K_RESULTS`

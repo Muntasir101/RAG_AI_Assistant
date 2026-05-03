@@ -2,13 +2,16 @@
 FastAPI backend for RAG AI Decision Assistant
 Provides REST API endpoints for question-answering with session management
 """
+import asyncio
 import json
 import logging
+import sys
 import uuid
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Dict, Optional
 
-from fastapi import FastAPI, HTTPException, status
+from fastapi import FastAPI, File, HTTPException, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -53,20 +56,21 @@ app.add_middleware(
 
 # Redis client (with fallback to in-memory)
 _redis_client = None
+_redis_unavailable = False  # Set True after first failure to skip retries
 _fallback_sessions: Dict[str, Dict] = {}  # Fallback if Redis unavailable
 SESSION_TTL = 86400  # 24 hours in seconds
 
 
 def get_redis_client():
     """Get or create Redis client"""
-    global _redis_client
-    
-    if not REDIS_AVAILABLE:
+    global _redis_client, _redis_unavailable
+
+    if not REDIS_AVAILABLE or _redis_unavailable:
         return None
-    
+
     if _redis_client is not None:
         return _redis_client
-    
+
     try:
         _redis_client = redis.Redis(
             host=settings.redis_host,
@@ -75,9 +79,8 @@ def get_redis_client():
             password=settings.redis_password if settings.redis_password else None,
             ssl=settings.redis_ssl,
             decode_responses=settings.redis_decode_responses,
-            socket_connect_timeout=5,
-            socket_timeout=5,
-            retry_on_timeout=True
+            socket_connect_timeout=2,
+            socket_timeout=2,
         )
         # Test connection
         _redis_client.ping()
@@ -86,6 +89,7 @@ def get_redis_client():
     except Exception as e:
         logger.warning(f"Redis connection failed: {str(e)}. Using in-memory storage.")
         _redis_client = None
+        _redis_unavailable = True
         return None
 
 
@@ -327,6 +331,91 @@ async def delete_session_endpoint(session_id: str):
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Session not found"
         )
+
+
+_ALLOWED_EXTS = {".pdf", ".docx", ".txt", ".md"}
+
+@app.get("/files")
+async def list_files():
+    data_dir = Path(settings.data_dir)
+    files = []
+    if data_dir.exists():
+        for f in sorted(data_dir.iterdir(), key=lambda x: x.stat().st_mtime, reverse=True):
+            if f.is_file() and f.suffix.lower() in _ALLOWED_EXTS:
+                files.append({
+                    "name": f.name,
+                    "size": f.stat().st_size,
+                    "type": f.suffix.lower().lstrip(".")
+                })
+    return {"files": files}
+
+
+@app.post("/upload")
+async def upload_file(file: UploadFile = File(...)):
+    ext = Path(file.filename).suffix.lower()
+    if ext not in _ALLOWED_EXTS:
+        raise HTTPException(status_code=400, detail=f"Unsupported type '{ext}'. Allowed: PDF, DOCX, TXT, MD")
+    if "/" in file.filename or "\\" in file.filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    dest = Path(settings.data_dir) / file.filename
+    content = await file.read()
+    dest.write_bytes(content)
+    logger.info(f"Uploaded {file.filename} ({len(content):,} bytes)")
+    return {"filename": file.filename, "size": len(content)}
+
+
+@app.delete("/files/{filename}")
+async def delete_file(filename: str):
+    if "/" in filename or "\\" in filename or ".." in filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    path = Path(settings.data_dir) / filename
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="File not found")
+    path.unlink()
+    logger.info(f"Deleted {filename}")
+    return {"message": f"{filename} deleted"}
+
+
+_reindex_state: Dict = {"status": "idle", "message": ""}
+
+
+@app.get("/reindex/status")
+async def reindex_status():
+    return _reindex_state
+
+
+@app.post("/reindex")
+async def trigger_reindex():
+    global _reindex_state
+    if _reindex_state["status"] == "running":
+        raise HTTPException(status_code=409, detail="Reindex already in progress")
+    _reindex_state = {"status": "running", "message": "Rebuilding knowledge base…"}
+    asyncio.create_task(_run_reindex())
+    return {"message": "Reindex started"}
+
+
+async def _run_reindex():
+    global _reindex_state
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            sys.executable, "ingest.py",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=str(Path(__file__).parent)
+        )
+        _, stderr = await proc.communicate()
+        if proc.returncode == 0:
+            import retriever
+            retriever._vector_store = None
+            retriever._qa_chain = None
+            _reindex_state = {"status": "done", "message": "Knowledge base rebuilt successfully"}
+            logger.info("Reindex completed")
+        else:
+            _reindex_state = {"status": "error", "message": stderr.decode()[:400]}
+            logger.error(f"Reindex failed: {stderr.decode()}")
+    except Exception as e:
+        _reindex_state = {"status": "error", "message": str(e)}
+        logger.error(f"Reindex error: {e}")
 
 
 if __name__ == "__main__":

@@ -50,21 +50,6 @@ python app.py
 # Visit http://localhost:8000
 ```
 
-**Option B: Telegram Bot**
-```bash
-# Add TELEGRAM_BOT_TOKEN to .env first
-python bot.py
-```
-
-**Option C: Both**
-```bash
-# Terminal 1
-python app.py
-
-# Terminal 2  
-python bot.py
-```
-
 ## Step 6: Test It!
 
 **API Test:**
@@ -73,11 +58,6 @@ curl -X POST http://localhost:8000/ask \
   -H "Content-Type: application/json" \
   -d '{"question": "What is volleyball?"}'
 ```
-
-**Telegram:**
-- Find your bot on Telegram
-- Send `/start`
-- Ask a question!
 
 ## Troubleshooting
 

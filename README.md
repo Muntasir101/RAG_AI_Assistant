@@ -11,7 +11,7 @@ A specialized AI decision assistant built with Retrieval-Augmented Generation (R
 - **Local Embeddings Fallback**: Uses HuggingFace embeddings when API quota is exceeded
 - **Structured Responses**: Returns answers with source citations and confidence scores
 - **Session Management**: Tracks conversation history per user
-- **Triple Interface**: Web UI, REST API, and Telegram bot
+- **Dual Interface**: Web UI and REST API
 - **Production Ready**: Docker support, error handling, logging
 
 ## 🏗️ Architecture
@@ -32,12 +32,11 @@ A specialized AI decision assistant built with Retrieval-Augmented Generation (R
 │  retriever.py   │  → Vector Search → Context Retrieval → LLM
 └────────┬────────┘
          │
-         ├──────────────┬──────────────┐
-         ▼              ▼              ▼
-    ┌─────────┐   ┌──────────┐   ┌──────────┐
-    │ app.py  │   │ bot.py   │   │  Users   │
-    │ (API)   │   │(Telegram)│   │          │
-    └─────────┘   └──────────┘   └──────────┘
+         └──────────────┐
+                        ▼
+                   ┌──────────┐
+                   │  Users   │
+                   └──────────┘
 ```
 
 ### Components
@@ -60,12 +59,7 @@ A specialized AI decision assistant built with Retrieval-Augmented Generation (R
    - Health checks
    - CORS enabled
 
-4. **bot.py**: Telegram bot interface
-   - Modern python-telegram-bot v20+ API
-   - User session tracking
-   - Multilingual support
-
-5. **config.py**: Centralized configuration
+4. **config.py**: Centralized configuration
    - Environment variable management
    - Pydantic settings validation
 
@@ -78,7 +72,6 @@ A specialized AI decision assistant built with Retrieval-Augmented Generation (R
   - **Google Gemini** (recommended) - Get key at https://ai.google.dev
   - OpenAI - Get key at https://platform.openai.com
   - DeepSeek - Get key at https://platform.deepseek.com
-- Telegram Bot Token (optional, for bot interface)
 - Knowledge base documents
 
 ### Installation
@@ -116,9 +109,6 @@ DEEPSEEK_MODEL=deepseek-chat
 # Google Gemini Configuration (if using Gemini)
 GEMINI_API_KEY=your_gemini_api_key_here
 GEMINI_MODEL=gemini-3-flash-preview
-
-# Telegram Bot (optional)
-TELEGRAM_BOT_TOKEN=your_telegram_bot_token_here
 
 # API Configuration
 API_HOST=0.0.0.0
@@ -170,20 +160,6 @@ python app.py
 # API available at http://localhost:8000
 # Web UI at http://localhost:8000
 # API docs at http://localhost:8000/docs
-```
-
-**Option 3: Telegram Bot**
-```bash
-python bot.py
-```
-
-**Option 4: Both Web UI and Telegram Bot**
-```bash
-# Terminal 1
-python app.py
-
-# Terminal 2
-python bot.py
 ```
 
 ## 📖 Usage
@@ -245,14 +221,6 @@ curl -X POST http://localhost:8000/ask \
 }
 ```
 
-### Telegram Bot
-
-1. Create a bot via [@BotFather](https://t.me/botfather)
-2. Get your bot token
-3. Add token to `.env` file
-4. Run `python bot.py`
-5. Start chatting with your bot
-
 ## 🐳 Docker Deployment
 
 ```bash
@@ -288,7 +256,6 @@ See [DEPLOYMENT.md](DEPLOYMENT.md) for detailed deployment instructions.
 | `TOP_K_RESULTS` | Number of retrieved chunks | `3` |
 | `DATA_DIR` | Knowledge base directory | `knowledge_data` |
 | `INDEX_FILE` | FAISS index file | `faiss_index.pkl` |
-| `TELEGRAM_BOT_TOKEN` | Telegram bot token (optional) | - |
 | `REDIS_HOST` | Redis server host | `localhost` |
 | `REDIS_PORT` | Redis server port | `6379` |
 | `REDIS_DB` | Redis database number | `0` |
@@ -309,7 +276,6 @@ See [DEPLOYMENT.md](DEPLOYMENT.md) for detailed deployment instructions.
 ```
 Rag_AI_Assistant/
 ├── app.py              # FastAPI REST API + Web UI
-├── bot.py              # Telegram bot
 ├── ingest.py           # Document ingestion and indexing
 ├── retriever.py        # RAG retrieval and generation
 ├── config.py           # Configuration management
@@ -447,11 +413,6 @@ python ingest.py  # Re-run ingestion
 - Local embeddings require `sentence-transformers` package (installed automatically)
 - First run will download the model (~400MB)
 
-### Telegram bot not responding
-- Verify bot token in `.env`
-- Check API is running (`http://localhost:8000/health`)
-- Review bot logs
-
 ### Memory issues
 - Reduce `CHUNK_SIZE` and `TOP_K_RESULTS`
 - Use smaller embedding model
@@ -503,4 +464,4 @@ Try asking:
 
 ---
 
-**Built with**: Python, FastAPI, LangChain, Google Gemini, OpenAI, DeepSeek, FAISS, HuggingFace, python-telegram-bot
+**Built with**: Python, FastAPI, LangChain, Google Gemini, OpenAI, DeepSeek, FAISS, HuggingFace

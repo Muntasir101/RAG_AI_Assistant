@@ -7,9 +7,6 @@ from pathlib import Path
 ENV_TEMPLATE = """# OpenAI API Configuration
 OPENAI_API_KEY=your_openai_api_key_here
 
-# Telegram Bot Configuration (optional)
-TELEGRAM_BOT_TOKEN=your_telegram_bot_token_here
-
 # API Configuration
 API_HOST=0.0.0.0
 API_PORT=8000
@@ -48,9 +45,8 @@ def create_env_file():
         print(f"   Location: {env_path.absolute()}")
         print("\n📝 Next steps:")
         print("   1. Edit .env file and add your OPENAI_API_KEY")
-        print("   2. (Optional) Add TELEGRAM_BOT_TOKEN if using Telegram bot")
-        print("   3. Add your documents to knowledge_data/ directory")
-        print("   4. Run: python ingest.py")
+        print("   2. Add your documents to knowledge_data/ directory")
+        print("   3. Run: python ingest.py")
     except Exception as e:
         print(f"❌ Error creating .env file: {str(e)}")
 
