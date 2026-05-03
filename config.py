@@ -49,8 +49,13 @@ class Settings(BaseSettings):
     
     # Data Configuration
     data_dir: str = "knowledge_data"
-    index_file: str = "data/faiss_index.pkl"
+    index_path: str = "data/faiss_index"
     
+    # Auth
+    jwt_secret: str = "change-me-in-production-use-a-long-random-string"
+    jwt_algorithm: str = "HS256"
+    jwt_expiry_hours: int = 24
+
     # Logging
     log_level: str = "INFO"
     

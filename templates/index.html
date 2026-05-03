@@ -9,7 +9,35 @@
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-<div class="app" id="app">
+
+<!-- ── Login overlay ──────────────────────────────────────────────────────── -->
+<div class="login-overlay" id="loginOverlay">
+  <div class="login-card">
+    <div class="login-logo">
+      <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#7c8cf8" stroke-width="2">
+        <circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/>
+      </svg>
+      <h2>RAG Assistant</h2>
+      <p>Sign in to continue</p>
+    </div>
+    <form id="loginForm" onsubmit="handleLogin(event)">
+      <div class="form-field">
+        <label for="loginUser">Username</label>
+        <input type="text" id="loginUser" autocomplete="username" required placeholder="Enter username">
+      </div>
+      <div class="form-field">
+        <label for="loginPass">Password</label>
+        <input type="password" id="loginPass" autocomplete="current-password" required placeholder="Enter password">
+      </div>
+      <p class="login-error" id="loginError"></p>
+      <button class="login-btn" id="loginBtn" type="submit">Sign in</button>
+    </form>
+    <p class="login-hint">Default: <strong>admin</strong> / admin123 &nbsp;·&nbsp; <strong>user</strong> / user123</p>
+  </div>
+</div>
+
+<!-- ── Main app ───────────────────────────────────────────────────────────── -->
+<div class="app" id="app" style="display:none">
 
   <!-- Sidebar -->
   <aside class="sidebar" id="sidebar">
@@ -25,7 +53,6 @@
         <span class="section-label">Knowledge Base</span>
         <span class="file-badge" id="fileBadge">0</span>
       </div>
-
       <div class="file-list" id="fileList">
         <div class="file-empty" id="fileEmpty">
           <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" opacity=".4">
@@ -37,37 +64,51 @@
       </div>
     </div>
 
-    <div class="sidebar-upload">
-      <input type="file" id="fileInput" multiple accept=".pdf,.docx,.txt,.md" hidden>
-      <div class="upload-zone" id="uploadZone">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-          <polyline points="17 8 12 3 7 8"/>
-          <line x1="12" y1="3" x2="12" y2="15"/>
-        </svg>
-        <span>Upload Documents</span>
-        <small>PDF · DOCX · TXT · MD</small>
+    <!-- Admin-only: upload, URL ingest, rebuild -->
+    <div id="adminControls">
+      <div class="sidebar-upload">
+        <input type="file" id="fileInput" multiple accept=".pdf,.docx,.txt,.md" hidden>
+        <div class="upload-zone" id="uploadZone">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="17 8 12 3 7 8"/>
+            <line x1="12" y1="3" x2="12" y2="15"/>
+          </svg>
+          <span>Upload Documents</span>
+          <small>PDF · DOCX · TXT · MD</small>
+        </div>
+
+        <div class="upload-progress" id="uploadProgress" style="display:none">
+          <div class="progress-track"><div class="progress-fill" id="progressFill"></div></div>
+          <span id="uploadStatus">Uploading…</span>
+        </div>
+
+        <div class="rebuild-notice" id="rebuildNotice" style="display:none">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2">
+            <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+          </svg>
+          Knowledge base needs rebuild
+        </div>
+
+        <button class="rebuild-btn" id="rebuildBtn" onclick="rebuildKB()">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="23 4 23 10 17 10"/>
+            <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+          </svg>
+          Rebuild Knowledge Base
+        </button>
       </div>
 
-      <div class="upload-progress" id="uploadProgress" style="display:none">
-        <div class="progress-track"><div class="progress-fill" id="progressFill"></div></div>
-        <span id="uploadStatus">Uploading…</span>
+      <div class="url-ingest">
+        <div class="section-header" style="padding: 0 4px; margin-bottom: 8px;">
+          <span class="section-label">Add from URL</span>
+        </div>
+        <div class="url-input-row">
+          <input type="url" id="urlInput" placeholder="https://…" class="url-text-input">
+          <button class="url-add-btn" id="urlAddBtn" onclick="ingestUrl()">Add</button>
+        </div>
+        <p class="url-error" id="urlError"></p>
       </div>
-
-      <div class="rebuild-notice" id="rebuildNotice" style="display:none">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2">
-          <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
-        </svg>
-        Knowledge base needs rebuild
-      </div>
-
-      <button class="rebuild-btn" id="rebuildBtn" onclick="rebuildKB()">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <polyline points="23 4 23 10 17 10"/>
-          <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
-        </svg>
-        Rebuild Knowledge Base
-      </button>
     </div>
 
     <div class="sidebar-footer">
@@ -98,6 +139,11 @@
         </svg>
         New Chat
       </button>
+      <div class="user-pill">
+        <span class="user-name" id="userDisplayName"></span>
+        <span class="role-tag" id="roleTag"></span>
+        <button class="logout-btn" onclick="logout()">Sign out</button>
+      </div>
     </div>
 
     <div class="chat-body" id="chatMessages">

@@ -1,19 +1,139 @@
-/* ── State ──────────────────────────────────────── */
+/* ── Auth storage ────────────────────────── */
+const TOKEN_KEY = 'rag_token';
+const USER_KEY  = 'rag_user';
+
+function getToken() { return localStorage.getItem(TOKEN_KEY); }
+function getUser()  { try { return JSON.parse(localStorage.getItem(USER_KEY)); } catch { return null; } }
+function setAuth(token, user) {
+  localStorage.setItem(TOKEN_KEY, token);
+  localStorage.setItem(USER_KEY, JSON.stringify(user));
+}
+function clearAuth() {
+  localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(USER_KEY);
+}
+
+/* ── Fetch wrapper (auto-injects token, handles 401) ── */
+async function apiFetch(url, options = {}) {
+  const token = getToken();
+  if (token) {
+    options.headers = { ...(options.headers || {}), 'Authorization': `Bearer ${token}` };
+  }
+  const res = await fetch(url, options);
+  if (res.status === 401) {
+    clearAuth();
+    showLogin();
+    throw new Error('Session expired. Please sign in again.');
+  }
+  return res;
+}
+
+/* ── State ──────────────────────────────── */
 let sessionId = null;
 let needsRebuild = false;
 let reindexPollTimer = null;
 
-/* ── marked.js config ───────────────────────────── */
+/* ── marked.js config ───────────────────── */
 marked.setOptions({ breaks: true, gfm: true });
 
-/* ── Init ───────────────────────────────────────── */
-document.addEventListener('DOMContentLoaded', () => {
+/* ── Init ───────────────────────────────── */
+document.addEventListener('DOMContentLoaded', async () => {
+  const token = getToken();
+  if (!token) { showLogin(); return; }
+
+  // Verify token with server
+  try {
+    const res = await fetch('/auth/me', {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+    if (res.ok) {
+      const user = await res.json();
+      localStorage.setItem(USER_KEY, JSON.stringify(user));
+      hideLogin();
+      initApp();
+    } else {
+      clearAuth();
+      showLogin();
+    }
+  } catch {
+    clearAuth();
+    showLogin();
+  }
+});
+
+/* ── Login / logout ─────────────────────── */
+function showLogin() {
+  document.getElementById('loginOverlay').style.display = 'flex';
+  document.getElementById('app').style.display = 'none';
+  document.getElementById('loginUser')?.focus();
+}
+
+function hideLogin() {
+  document.getElementById('loginOverlay').style.display = 'none';
+  document.getElementById('app').style.display = 'grid';
+}
+
+async function handleLogin(e) {
+  e.preventDefault();
+  const btn    = document.getElementById('loginBtn');
+  const errEl  = document.getElementById('loginError');
+  btn.disabled = true;
+  btn.textContent = 'Signing in…';
+  errEl.textContent = '';
+
+  try {
+    const res = await fetch('/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        username: document.getElementById('loginUser').value.trim(),
+        password: document.getElementById('loginPass').value,
+      }),
+    });
+    const data = await res.json();
+    if (res.ok) {
+      setAuth(data.access_token, { username: data.username, role: data.role });
+      hideLogin();
+      initApp();
+    } else {
+      errEl.textContent = data.detail || 'Login failed. Check credentials.';
+    }
+  } catch {
+    errEl.textContent = 'Connection error. Is the server running?';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Sign in';
+  }
+}
+
+function logout() {
+  clearAuth();
+  sessionId = null;
+  document.getElementById('loginUser').value = '';
+  document.getElementById('loginPass').value = '';
+  showLogin();
+}
+
+/* ── App init (after successful login) ──── */
+function initApp() {
+  const user = getUser();
+  if (user) {
+    document.getElementById('userDisplayName').textContent = user.username;
+    const roleTag = document.getElementById('roleTag');
+    roleTag.textContent = user.role;
+    roleTag.className = `role-tag ${user.role}`;
+
+    if (user.role !== 'admin') {
+      const adminControls = document.getElementById('adminControls');
+      if (adminControls) adminControls.style.display = 'none';
+    }
+  }
   loadFiles();
   setupUploadZone();
   document.getElementById('questionInput').focus();
-});
+}
 
-/* ── Sidebar ────────────────────────────────────── */
+/* ── Sidebar ────────────────────────────── */
 function toggleSidebar() {
   document.getElementById('sidebar').classList.toggle('open');
   document.getElementById('sidebarOverlay').classList.toggle('open');
@@ -23,28 +143,26 @@ function closeSidebar() {
   document.getElementById('sidebarOverlay').classList.remove('open');
 }
 
-/* ── File list ──────────────────────────────────── */
+/* ── File list ──────────────────────────── */
 async function loadFiles() {
   try {
-    const res = await fetch('/files');
+    const res = await apiFetch('/files');
     const data = await res.json();
     renderFileList(data.files || []);
-  } catch (_) { /* sidebar just stays empty */ }
+  } catch (_) { /* sidebar stays empty */ }
 }
 
 function renderFileList(files) {
   const list  = document.getElementById('fileList');
   const badge = document.getElementById('fileBadge');
   const empty = document.getElementById('fileEmpty');
-  badge.textContent = files.length;
+  const user  = getUser();
+  const isAdmin = user && user.role === 'admin';
 
-  // Remove old file items (keep empty placeholder)
+  badge.textContent = files.length;
   list.querySelectorAll('.file-item').forEach(el => el.remove());
 
-  if (files.length === 0) {
-    empty.style.display = 'flex';
-    return;
-  }
+  if (files.length === 0) { empty.style.display = 'flex'; return; }
   empty.style.display = 'none';
 
   files.forEach(f => {
@@ -56,12 +174,13 @@ function renderFileList(files) {
         <div class="file-name" title="${escHtml(f.name)}">${escHtml(f.name)}</div>
         <div class="file-size">${fmtSize(f.size)}</div>
       </div>
+      ${isAdmin ? `
       <button class="file-del" onclick="deleteFile('${escHtml(f.name)}')" title="Delete">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <polyline points="3 6 5 6 21 6"/>
           <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
         </svg>
-      </button>`;
+      </button>` : ''}`;
     list.appendChild(item);
   });
 }
@@ -69,7 +188,7 @@ function renderFileList(files) {
 async function deleteFile(filename) {
   if (!confirm(`Delete "${filename}"?`)) return;
   try {
-    const res = await fetch(`/files/${encodeURIComponent(filename)}`, { method: 'DELETE' });
+    const res = await apiFetch(`/files/${encodeURIComponent(filename)}`, { method: 'DELETE' });
     if (res.ok) {
       markNeedsRebuild(true);
       loadFiles();
@@ -80,10 +199,11 @@ async function deleteFile(filename) {
   } catch (e) { alert('Delete failed: ' + e.message); }
 }
 
-/* ── Upload ─────────────────────────────────────── */
+/* ── Upload ─────────────────────────────── */
 function setupUploadZone() {
   const zone  = document.getElementById('uploadZone');
   const input = document.getElementById('fileInput');
+  if (!zone || !input) return;
 
   zone.addEventListener('click', () => input.click());
   input.addEventListener('change', () => {
@@ -104,18 +224,17 @@ function setupUploadZone() {
 async function uploadFiles(files) {
   const prog   = document.getElementById('uploadProgress');
   const fill   = document.getElementById('progressFill');
-  const status = document.getElementById('uploadStatus');
+  const statusEl = document.getElementById('uploadStatus');
   prog.style.display = 'block';
 
   for (let i = 0; i < files.length; i++) {
-    const pct = Math.round((i / files.length) * 100);
-    fill.style.width = pct + '%';
-    status.textContent = `Uploading ${files[i].name}…`;
+    fill.style.width = Math.round((i / files.length) * 100) + '%';
+    statusEl.textContent = `Uploading ${files[i].name}…`;
 
     const form = new FormData();
     form.append('file', files[i]);
     try {
-      const res = await fetch('/upload', { method: 'POST', body: form });
+      const res = await apiFetch('/upload', { method: 'POST', body: form });
       if (!res.ok) {
         const d = await res.json();
         alert(`Failed to upload ${files[i].name}: ${d.detail}`);
@@ -124,17 +243,54 @@ async function uploadFiles(files) {
   }
 
   fill.style.width = '100%';
-  status.textContent = `${files.length} file(s) uploaded`;
+  statusEl.textContent = `${files.length} file(s) uploaded`;
   setTimeout(() => { prog.style.display = 'none'; fill.style.width = '0%'; }, 2000);
 
   markNeedsRebuild(true);
   loadFiles();
 }
 
-/* ── Rebuild ─────────────────────────────────────── */
+/* ── URL ingest ─────────────────────────── */
+async function ingestUrl() {
+  const input  = document.getElementById('urlInput');
+  const btn    = document.getElementById('urlAddBtn');
+  const errEl  = document.getElementById('urlError');
+  const url    = input.value.trim();
+  if (!url) return;
+
+  errEl.textContent = '';
+  btn.disabled = true;
+  setStatus('running', 'Fetching URL…');
+
+  try {
+    const res  = await apiFetch('/ingest-url', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url }),
+    });
+    const data = await res.json();
+    if (res.ok) {
+      input.value = '';
+      markNeedsRebuild(true);
+      loadFiles();
+      setStatus('ready', 'URL added — rebuild KB to activate');
+    } else {
+      setStatus('error', 'URL ingest failed');
+      errEl.textContent = data.detail || 'Failed to fetch URL';
+    }
+  } catch (e) {
+    setStatus('error', 'Error');
+    errEl.textContent = e.message;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+/* ── Rebuild ─────────────────────────────── */
 function markNeedsRebuild(state) {
   needsRebuild = state;
-  document.getElementById('rebuildNotice').style.display = state ? 'flex' : 'none';
+  const notice = document.getElementById('rebuildNotice');
+  if (notice) notice.style.display = state ? 'flex' : 'none';
 }
 
 async function rebuildKB() {
@@ -143,7 +299,7 @@ async function rebuildKB() {
   setStatus('running', 'Rebuilding…');
 
   try {
-    const res = await fetch('/reindex', { method: 'POST' });
+    const res = await apiFetch('/reindex', { method: 'POST' });
     if (!res.ok && res.status !== 409) {
       const d = await res.json();
       setStatus('error', d.detail || 'Reindex failed');
@@ -161,7 +317,7 @@ function pollReindex() {
   clearInterval(reindexPollTimer);
   reindexPollTimer = setInterval(async () => {
     try {
-      const res = await fetch('/reindex/status');
+      const res = await apiFetch('/reindex/status');
       const data = await res.json();
       if (data.status === 'running') {
         setStatus('running', 'Rebuilding…');
@@ -187,7 +343,7 @@ function setStatus(state, text) {
   lbl.textContent = text;
 }
 
-/* ── Chat submit ─────────────────────────────────── */
+/* ── Chat submit ─────────────────────────── */
 function handleSubmit(e) {
   e.preventDefault();
   const input = document.getElementById('questionInput');
@@ -210,12 +366,11 @@ async function sendQuestion(question) {
   addUserBubble(question);
 
   const loadingId = addLoadingBubble();
-  const btn = document.getElementById('sendButton');
+  const btn   = document.getElementById('sendButton');
   const input = document.getElementById('questionInput');
-  btn.disabled = true;
+  btn.disabled   = true;
   input.disabled = true;
 
-  // Show hint after 5s
   const hintTimer = setTimeout(() => {
     const el = document.getElementById(loadingId);
     if (el) {
@@ -227,10 +382,10 @@ async function sendQuestion(question) {
   }, 5000);
 
   try {
-    const res = await fetch('/ask', {
+    const res = await apiFetch('/ask', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ question, session_id: sessionId })
+      body: JSON.stringify({ question, session_id: sessionId }),
     });
     clearTimeout(hintTimer);
     removeLoading(loadingId);
@@ -247,13 +402,13 @@ async function sendQuestion(question) {
     removeLoading(loadingId);
     addErrorBubble('Connection error: ' + err.message);
   } finally {
-    btn.disabled = false;
+    btn.disabled   = false;
     input.disabled = false;
     input.focus();
   }
 }
 
-/* ── Message rendering ───────────────────────────── */
+/* ── Message rendering ───────────────────── */
 function hideWelcome() {
   const w = document.getElementById('welcomeScreen');
   if (w) w.style.display = 'none';
@@ -279,11 +434,9 @@ function addBotBubble(answer, sources, confidence) {
         <strong>Source ${i + 1}</strong>
         ${escHtml(s.content_preview || '')}
       </div>`).join('');
-    sourcesHtml = `
-      <div class="sources-list" id="sl-${Date.now()}">${items}</div>`;
+    sourcesHtml = `<div class="sources-list" id="sl-${Date.now()}">${items}</div>`;
   }
 
-  const metaId = 'meta-' + Date.now();
   const row = document.createElement('div');
   row.className = 'msg-row bot';
   row.innerHTML = `
@@ -294,7 +447,7 @@ function addBotBubble(answer, sources, confidence) {
     </div>
     <div class="bubble">
       <div class="md-content">${marked.parse(answer)}</div>
-      <div class="bubble-meta" id="${metaId}">
+      <div class="bubble-meta">
         <span class="conf-badge ${confClass}">
           <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
           ${confPct}% confidence
@@ -343,14 +496,11 @@ function addLoadingBubble() {
   return id;
 }
 
-function removeLoading(id) {
-  document.getElementById(id)?.remove();
-}
+function removeLoading(id) { document.getElementById(id)?.remove(); }
 
 function toggleSources(btn) {
   btn.classList.toggle('open');
-  const bubble = btn.closest('.bubble');
-  bubble.querySelector('.sources-list')?.classList.toggle('open');
+  btn.closest('.bubble').querySelector('.sources-list')?.classList.toggle('open');
 }
 
 function appendMsg(el) {
@@ -359,13 +509,13 @@ function appendMsg(el) {
   body.scrollTop = body.scrollHeight;
 }
 
-/* ── Chip shortcuts ──────────────────────────────── */
+/* ── Chip shortcuts ──────────────────────── */
 function useChip(btn) {
   document.getElementById('questionInput').value = btn.textContent;
   document.getElementById('chatForm').dispatchEvent(new Event('submit'));
 }
 
-/* ── New chat ────────────────────────────────────── */
+/* ── New chat ────────────────────────────── */
 function newChat() {
   sessionId = null;
   const body = document.getElementById('chatMessages');
@@ -390,13 +540,13 @@ function newChat() {
   document.getElementById('questionInput').focus();
 }
 
-/* ── Textarea auto-resize ────────────────────────── */
+/* ── Textarea auto-resize ────────────────── */
 function autoResize(el) {
   el.style.height = 'auto';
   el.style.height = Math.min(el.scrollHeight, 160) + 'px';
 }
 
-/* ── Helpers ─────────────────────────────────────── */
+/* ── Helpers ─────────────────────────────── */
 function escHtml(str) {
   return String(str)
     .replace(/&/g, '&amp;')
@@ -406,7 +556,7 @@ function escHtml(str) {
 }
 
 function fmtSize(bytes) {
-  if (bytes < 1024)        return bytes + ' B';
-  if (bytes < 1048576)     return (bytes / 1024).toFixed(1) + ' KB';
+  if (bytes < 1024)    return bytes + ' B';
+  if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
   return (bytes / 1048576).toFixed(1) + ' MB';
 }

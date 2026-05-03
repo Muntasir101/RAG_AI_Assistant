@@ -10,6 +10,7 @@ from typing import List
 import pdfplumber
 from docx import Document
 
+from langchain_core.documents import Document as LCDocument
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from langchain_openai import OpenAIEmbeddings
@@ -113,21 +114,22 @@ def ingest_knowledge_base() -> None:
     logger.info(f"Found {len(files)} files to process")
     
     # Load all documents
-    all_texts = []
+    all_docs = []
     for file_path in files:
         try:
             text = load_text(str(file_path))
             if text.strip():
-                all_texts.append(text)
+                # Create LangChain Document objects with source metadata
+                all_docs.append(LCDocument(page_content=text, metadata={"source": file_path.name}))
                 logger.info(f"Successfully loaded {file_path.name} ({len(text)} characters)")
         except Exception as e:
             logger.error(f"Failed to load {file_path.name}: {str(e)}")
             continue
     
-    if not all_texts:
+    if not all_docs:
         raise ValueError("No text content could be extracted from any files")
     
-    # Chunk text
+    # Chunk documents
     logger.info("Chunking documents...")
     text_splitter = RecursiveCharacterTextSplitter(
         chunk_size=settings.chunk_size,
@@ -135,10 +137,7 @@ def ingest_knowledge_base() -> None:
         length_function=len
     )
     
-    docs = []
-    for text in all_texts:
-        chunks = text_splitter.split_text(text)
-        docs.extend(chunks)
+    docs = text_splitter.split_documents(all_docs)
     
     logger.info(f"Created {len(docs)} text chunks")
     
@@ -185,24 +184,92 @@ def ingest_knowledge_base() -> None:
                     "2. Install sentence-transformers: pip install sentence-transformers"
                 )
         
-        vector_store = FAISS.from_texts(docs, embeddings)
+        vector_store = FAISS.from_documents(docs, embeddings)
         logger.info("Vector store created successfully")
     except Exception as e:
         logger.error(f"Error creating embeddings: {str(e)}")
         raise
     
     # Save FAISS index
-    logger.info(f"Saving index to {settings.index_file}...")
+    logger.info(f"Saving index to {settings.index_path}...")
     try:
-        Path(settings.index_file).parent.mkdir(parents=True, exist_ok=True)
-        with open(settings.index_file, "wb") as f:
-            pickle.dump(vector_store, f)
-        logger.info(f"Index saved successfully ({Path(settings.index_file).stat().st_size / 1024 / 1024:.2f} MB)")
+        Path(settings.index_path).parent.mkdir(parents=True, exist_ok=True)
+        vector_store.save_local(settings.index_path)
+        logger.info(f"Index saved successfully to {settings.index_path}")
     except Exception as e:
         logger.error(f"Error saving index: {str(e)}")
         raise
     
     logger.info("✅ Knowledge base ingested and indexed successfully")
+
+
+def fetch_url_text(url: str) -> str:
+    """
+    Fetch a web page and extract its plain text.
+    Uses realistic browser headers to avoid bot-detection blocks (403/429).
+
+    Args:
+        url: Full HTTP/HTTPS URL to fetch
+
+    Returns:
+        Cleaned plain text with title and URL header
+
+    Raises:
+        ValueError: If the site blocks the request or returns no usable content
+        Exception: On network or parsing failure
+    """
+    import re
+    import requests
+    from bs4 import BeautifulSoup
+
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/124.0.0.0 Safari/537.36"
+        ),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.5",
+        "Accept-Encoding": "gzip, deflate, br",
+        "DNT": "1",
+        "Connection": "keep-alive",
+        "Upgrade-Insecure-Requests": "1",
+    }
+
+    session = requests.Session()
+    resp = session.get(url, headers=headers, timeout=20, allow_redirects=True)
+
+    if resp.status_code == 403:
+        raise ValueError(
+            f"The website at {url} blocked the request (HTTP 403). "
+            "This site likely requires a real browser or login. "
+            "Try saving the page content manually as a .txt or .pdf file and uploading it instead."
+        )
+    if resp.status_code == 429:
+        raise ValueError(
+            f"Rate limited by {url} (HTTP 429). Wait a moment and try again."
+        )
+    resp.raise_for_status()
+
+    soup = BeautifulSoup(resp.text, "lxml")
+
+    # Drop non-content tags
+    for tag in soup(["script", "style", "nav", "footer", "header", "aside", "noscript", "form"]):
+        tag.decompose()
+
+    title = soup.title.get_text(strip=True) if soup.title else ""
+    body_text = soup.get_text(separator="\n", strip=True)
+    body_text = re.sub(r"\n{3,}", "\n\n", body_text)
+
+    if len(body_text.strip()) < 100:
+        raise ValueError(
+            f"Could not extract meaningful text from {url}. "
+            "The page may require JavaScript or be behind a login wall. "
+            "Try saving the content as a file and uploading it instead."
+        )
+
+    prefix = f"Title: {title}\nURL: {url}\n\n" if title else f"URL: {url}\n\n"
+    return prefix + body_text
 
 
 if __name__ == "__main__":

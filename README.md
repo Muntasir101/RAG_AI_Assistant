@@ -1,467 +1,331 @@
-# RAG AI Decision Assistant for Volleyball Athletes
+# RAG AI Decision Assistant
 
-A specialized AI decision assistant built with Retrieval-Augmented Generation (RAG) that provides evidence-based answers exclusively from a knowledge base. Designed specifically for volleyball athletes, supporting both Russian and English languages.
+A Retrieval-Augmented Generation (RAG) chatbot that answers questions **strictly from an uploaded knowledge base** — no hallucinations, no general knowledge. Supports PDF, DOCX, TXT, MD, and web URLs. Ships with a full chat UI, JWT authentication, conversation memory, and a live knowledge-base manager.
 
-**Current Status**: ✅ Fully operational with Gemini 3 Flash Preview, local embeddings, and multi-provider support.
+---
 
-## 🎯 Key Features
+## Features
 
-- **RAG-Based Architecture**: Answers only from provided knowledge base (no hallucinations)
-- **Multi-Provider Support**: Works with OpenAI, DeepSeek, or Google Gemini
-- **Local Embeddings Fallback**: Uses HuggingFace embeddings when API quota is exceeded
-- **Structured Responses**: Returns answers with source citations and confidence scores
-- **Session Management**: Tracks conversation history per user
-- **Dual Interface**: Web UI and REST API
-- **Production Ready**: Docker support, error handling, logging
+| Category | What's included |
+|---|---|
+| **Core RAG** | FAISS vector search, anti-hallucination system prompt, `temperature=0.0`, source citations, confidence scores |
+| **Conversation memory** | Last 5 turns of each session are injected into the LLM prompt for multi-turn context |
+| **Multi-format KB** | Ingest PDF, DOCX, TXT, MD from a folder **or** any public web URL |
+| **Live KB management** | Upload files, delete files, fetch URLs, rebuild index — all from the UI or API, no restart needed |
+| **Authentication** | JWT bearer tokens, two roles (`admin` / `user`), credentials stored in `data/users.json` |
+| **Multi-provider LLM** | Google Gemini (default), OpenAI, DeepSeek — switch with one env var |
+| **Embeddings fallback** | Tries OpenAI embeddings first; falls back to local HuggingFace (`paraphrase-multilingual-MiniLM-L12-v2`) automatically |
+| **Session storage** | Redis (primary, 24 h TTL) with automatic in-memory fallback |
+| **API docs** | Swagger UI at `/docs`, ReDoc at `/redoc` |
+| **Logging** | Structured Python logging throughout; level controlled by `LOG_LEVEL` |
+| **Docker** | `docker-compose.yml` includes the API and Redis |
 
-## 🏗️ Architecture
+---
+
+## Architecture
 
 ```
-┌─────────────────┐
-│  Knowledge Base │  (PDF, DOCX, TXT, MD files)
-│  (Documents)    │
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│   ingest.py     │  → Text Chunking → Embeddings → FAISS Index
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│  retriever.py   │  → Vector Search → Context Retrieval → LLM
-└────────┬────────┘
-         │
-         └──────────────┐
-                        ▼
-                   ┌──────────┐
-                   │  Users   │
-                   └──────────┘
+Documents (PDF / DOCX / TXT / MD / Web URLs)
+  │
+  ▼
+ingest.py — chunk → embed → FAISS index (data/faiss_index.pkl)
+  │
+  ▼
+retriever.py — similarity search → inject context + history → LLM
+  │
+  ▼
+app.py (FastAPI) — auth, sessions, REST endpoints
+  │
+  ├── /auth/login         POST  public
+  ├── /ask                POST  authenticated
+  ├── /files              GET   authenticated
+  ├── /upload             POST  admin
+  ├── /ingest-url         POST  admin
+  ├── /reindex            POST  admin
+  └── /docs               GET   public (Swagger)
+  │
+  ▼
+templates/index.html + static/ — browser chat UI
 ```
 
-### Components
+---
 
-1. **ingest.py**: Document ingestion and indexing
-   - Loads documents (PDF, DOCX, TXT, MD)
-   - Chunks text with configurable size/overlap
-   - Creates embeddings using OpenAI
-   - Builds FAISS vector index
-
-2. **retriever.py**: RAG retrieval and generation
-   - Loads FAISS vector store
-   - Performs similarity search
-   - Uses strict anti-hallucination prompts
-   - Returns structured responses with sources
-
-3. **app.py**: FastAPI REST API
-   - `/ask` endpoint for questions
-   - Session management
-   - Health checks
-   - CORS enabled
-
-4. **config.py**: Centralized configuration
-   - Environment variable management
-   - Pydantic settings validation
-
-## 🚀 Quick Start
+## Quick Start
 
 ### Prerequisites
 
 - Python 3.11+
-- API key for one of the supported providers:
-  - **Google Gemini** (recommended) - Get key at https://ai.google.dev
-  - OpenAI - Get key at https://platform.openai.com
-  - DeepSeek - Get key at https://platform.deepseek.com
-- Knowledge base documents
+- An API key for at least one supported LLM provider (see table below)
 
-### Installation
+### 1. Install
 
 ```bash
-# Clone repository
 git clone <your-repo-url>
 cd Rag_AI_Assistant
 
-# Create virtual environment
 python -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
+# Windows:
+venv\Scripts\activate
+# macOS/Linux:
+source venv/bin/activate
 
-# Install dependencies
 pip install -r requirements.txt
+
+# Gemini provider requires one extra package:
+pip install langchain-google-genai
 ```
 
-### Configuration
-
-1. Create `.env` file:
+### 2. Configure
 
 ```bash
-# Provider Selection (openai, deepseek, or gemini)
+python setup_env.py   # creates .env from template
+```
+
+Edit `.env` and set at least one provider key:
+
+```env
+# LLM provider: gemini | openai | deepseek
 PROVIDER=gemini
+GEMINI_API_KEY=your_key_here
 
-# OpenAI Configuration (if using OpenAI)
-OPENAI_API_KEY=your_openai_api_key_here
-OPENAI_MODEL=gpt-4o-mini
-EMBEDDING_MODEL=text-embedding-3-small
+# Optional — leave blank to use local HuggingFace embeddings
+OPENAI_API_KEY=
 
-# DeepSeek Configuration (if using DeepSeek)
-DEEPSEEK_API_KEY=your_deepseek_api_key_here
-DEEPSEEK_MODEL=deepseek-chat
+# Auth — change JWT_SECRET before any internet-facing deployment
+JWT_SECRET=change-me-in-production
+JWT_EXPIRY_HOURS=24
 
-# Google Gemini Configuration (if using Gemini)
-GEMINI_API_KEY=your_gemini_api_key_here
-GEMINI_MODEL=gemini-3-flash-preview
-
-# API Configuration
-API_HOST=0.0.0.0
-API_PORT=8000
-
-# RAG Configuration
-TEMPERATURE=0.0
-CHUNK_SIZE=1000
-CHUNK_OVERLAP=100
-TOP_K_RESULTS=3
-
-# Data Configuration
-DATA_DIR=knowledge_data
-INDEX_FILE=faiss_index.pkl
-
-# Logging
-LOG_LEVEL=INFO
+# Redis (optional — falls back to in-memory if unavailable)
+REDIS_HOST=localhost
+REDIS_PORT=6379
 ```
 
-**Note**: The system will automatically use local HuggingFace embeddings if the OpenAI API quota is exceeded, ensuring the system always works even without API access for embeddings.
-
-2. Prepare knowledge base:
+### 3. Add documents and build the index
 
 ```bash
-mkdir knowledge_data
-# Add your documents (PDF, DOCX, TXT, MD) to knowledge_data/
-```
-
-3. Ingest knowledge base:
-
-```bash
+# Drop files into knowledge_data/ then run:
 python ingest.py
 ```
 
-This creates `faiss_index.pkl` with your indexed documents.
+The index is saved to `data/faiss_index.pkl`. Re-run whenever you change the documents, **or** use the `/reindex` API / the Rebuild button in the UI.
 
-### Running
+### 4. Run
 
-**Option 1: Web UI (Recommended)**
 ```bash
 python app.py
-# Open browser: http://localhost:8000
-# Beautiful web interface with chat UI
+# Server starts at http://localhost:8000
 ```
 
-**Option 2: REST API only**
-```bash
-python app.py
-# API available at http://localhost:8000
-# Web UI at http://localhost:8000
-# API docs at http://localhost:8000/docs
-```
+Open `http://localhost:8000` in your browser. You'll see the login screen.
 
-## 📖 Usage
+**Default credentials**
 
-### Web UI
+| Username | Password | Role |
+|---|---|---|
+| `admin` | `admin123` | Admin — full access |
+| `user` | `user123` | User — chat only |
 
-The easiest way to interact with the assistant is through the web interface:
+Credentials are stored in `data/users.json` (created on first run). Edit that file to change passwords or add users; passwords must be bcrypt-hashed.
 
-1. Start the server:
-   ```bash
-   python app.py
-   ```
+---
 
-2. Open your browser and navigate to:
-   ```
-   http://localhost:8000
-   ```
-
-3. Start asking questions in the chat interface!
-
-**Features:**
-- Clean, modern chat interface
-- Real-time responses
-- Confidence scores
-- Source citations
-- Session management
-- Responsive design (works on mobile)
-
-### REST API
-
-**Health Check:**
-```bash
-curl http://localhost:8000/health
-```
-
-**Ask a Question:**
-```bash
-curl -X POST http://localhost:8000/ask \
-  -H "Content-Type: application/json" \
-  -d '{
-    "question": "What are the key strategies for serving in volleyball?",
-    "user_id": "user123"
-  }'
-```
-
-**Response:**
-```json
-{
-  "answer": "Based on the knowledge base...",
-  "session_id": "uuid-here",
-  "sources": [
-    {
-      "content_preview": "...",
-      "metadata": {}
-    }
-  ],
-  "confidence": 0.85,
-  "timestamp": "2024-01-01T12:00:00"
-}
-```
-
-## 🐳 Docker Deployment
+## Docker
 
 ```bash
-# Build and run with Docker Compose
-docker-compose up -d
-
-# View logs
-docker-compose logs -f
-
-# Stop
+docker-compose up -d        # starts API + Redis
+docker-compose logs -f api  # tail logs
 docker-compose down
 ```
 
-See [DEPLOYMENT.md](DEPLOYMENT.md) for detailed deployment instructions.
+---
 
-## 🔧 Configuration
+## Authentication
 
-### Environment Variables
+All endpoints except `/`, `/health`, `/api/health`, and `/auth/login` require a valid JWT.
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `PROVIDER` | AI provider: `openai`, `deepseek`, or `gemini` | `gemini` |
-| `OPENAI_API_KEY` | OpenAI API key (if using OpenAI) | - |
-| `DEEPSEEK_API_KEY` | DeepSeek API key (if using DeepSeek) | - |
-| `GEMINI_API_KEY` | Gemini API key (if using Gemini) | - |
-| `OPENAI_MODEL` | OpenAI model name | `gpt-4o-mini` |
-| `DEEPSEEK_MODEL` | DeepSeek model name | `deepseek-chat` |
-| `GEMINI_MODEL` | Gemini model name | `gemini-3-flash-preview` |
-| `EMBEDDING_MODEL` | Embedding model (OpenAI) | `text-embedding-3-small` |
-| `TEMPERATURE` | LLM temperature (0.0 = deterministic) | `0.0` |
-| `CHUNK_SIZE` | Text chunk size | `1000` |
-| `CHUNK_OVERLAP` | Chunk overlap | `100` |
-| `TOP_K_RESULTS` | Number of retrieved chunks | `3` |
-| `DATA_DIR` | Knowledge base directory | `knowledge_data` |
-| `INDEX_FILE` | FAISS index file | `faiss_index.pkl` |
-| `REDIS_HOST` | Redis server host | `localhost` |
-| `REDIS_PORT` | Redis server port | `6379` |
-| `REDIS_DB` | Redis database number | `0` |
-| `REDIS_PASSWORD` | Redis password (optional) | - |
-| `REDIS_SSL` | Enable SSL for Redis | `false` |
-| `LOG_LEVEL` | Logging level | `INFO` |
+**Login:**
+```bash
+curl -X POST http://localhost:8000/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username": "admin", "password": "admin123"}'
+```
 
-### Anti-Hallucination Measures
+Response:
+```json
+{
+  "access_token": "<jwt>",
+  "token_type": "bearer",
+  "username": "admin",
+  "role": "admin"
+}
+```
 
-1. **Strict System Prompt**: Explicitly instructs model to only use provided context
-2. **Low Temperature**: Set to 0.0 for deterministic, factual responses
-3. **Source Citation**: Returns source documents with answers
-4. **Confidence Scoring**: Indicates answer reliability
-5. **Context Limitation**: Only answers from retrieved knowledge base chunks
+**Use the token on subsequent requests:**
+```bash
+curl -H "Authorization: Bearer <jwt>" http://localhost:8000/files
+```
 
-## 📁 Project Structure
+**Verify current user:**
+```bash
+curl -H "Authorization: Bearer <jwt>" http://localhost:8000/auth/me
+```
+
+---
+
+## API Reference
+
+### Auth
+
+| Method | Endpoint | Auth | Description |
+|---|---|---|---|
+| `POST` | `/auth/login` | None | Get JWT token |
+| `GET` | `/auth/me` | User | Current user info |
+
+### Chat
+
+| Method | Endpoint | Auth | Description |
+|---|---|---|---|
+| `POST` | `/ask` | User | Ask a question |
+| `GET` | `/sessions/{id}` | User | Get session history |
+| `DELETE` | `/sessions/{id}` | User | Delete a session |
+
+**Ask request:**
+```json
+{
+  "question": "What does article 7 say?",
+  "session_id": "optional-uuid-for-multi-turn"
+}
+```
+
+**Ask response:**
+```json
+{
+  "answer": "Article 7 states that...",
+  "session_id": "uuid",
+  "sources": [
+    { "content_preview": "...", "metadata": {} }
+  ],
+  "confidence": 0.85,
+  "timestamp": "2025-05-03T10:00:00"
+}
+```
+
+### Knowledge Base (admin only)
+
+| Method | Endpoint | Auth | Description |
+|---|---|---|---|
+| `GET` | `/files` | User | List indexed files |
+| `POST` | `/upload` | Admin | Upload a document |
+| `DELETE` | `/files/{filename}` | Admin | Delete a document |
+| `POST` | `/ingest-url` | Admin | Fetch a web page into KB |
+| `POST` | `/reindex` | Admin | Rebuild FAISS index |
+| `GET` | `/reindex/status` | Admin | Check rebuild progress |
+
+**Ingest a URL:**
+```bash
+curl -X POST http://localhost:8000/ingest-url \
+  -H "Authorization: Bearer <jwt>" \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://example.com/page"}'
+```
+
+After adding files or URLs, call `/reindex` to rebuild the index (or click **Rebuild Knowledge Base** in the sidebar).
+
+### System
+
+| Method | Endpoint | Auth | Description |
+|---|---|---|---|
+| `GET` | `/health` | None | Full health check (index + Redis) |
+| `GET` | `/api/health` | None | Lightweight ping |
+| `GET` | `/docs` | None | Swagger UI |
+| `GET` | `/redoc` | None | ReDoc |
+
+---
+
+## Configuration Reference
+
+All settings are in `config.py` as Pydantic `BaseSettings`; env vars override defaults.
+
+| Variable | Default | Description |
+|---|---|---|
+| `PROVIDER` | `gemini` | LLM provider: `gemini` / `openai` / `deepseek` |
+| `GEMINI_API_KEY` | — | Google Gemini key |
+| `GEMINI_MODEL` | `gemini-3-flash-preview` | Gemini model ID |
+| `OPENAI_API_KEY` | — | OpenAI key (also used for embeddings) |
+| `OPENAI_MODEL` | `gpt-4o-mini` | OpenAI model ID |
+| `DEEPSEEK_API_KEY` | — | DeepSeek key |
+| `DEEPSEEK_MODEL` | `deepseek-chat` | DeepSeek model ID |
+| `EMBEDDING_MODEL` | `text-embedding-3-small` | OpenAI embedding model |
+| `TEMPERATURE` | `0.0` | LLM temperature (keep at 0 for factual answers) |
+| `TOP_K_RESULTS` | `3` | Chunks retrieved per query |
+| `CHUNK_SIZE` | `1000` | Characters per chunk (affects re-ingestion only) |
+| `CHUNK_OVERLAP` | `100` | Overlap between chunks |
+| `DATA_DIR` | `knowledge_data` | Folder scanned by `ingest.py` |
+| `INDEX_FILE` | `data/faiss_index.pkl` | FAISS index path |
+| `REDIS_HOST` | `localhost` | Redis host |
+| `REDIS_PORT` | `6379` | Redis port |
+| `REDIS_PASSWORD` | — | Redis password (optional) |
+| `JWT_SECRET` | `change-me-…` | Secret used to sign JWTs — **change this** |
+| `JWT_ALGORITHM` | `HS256` | JWT signing algorithm |
+| `JWT_EXPIRY_HOURS` | `24` | Token lifetime in hours |
+| `API_HOST` | `0.0.0.0` | Bind address |
+| `API_PORT` | `8000` | Bind port |
+| `LOG_LEVEL` | `INFO` | Python logging level |
+
+---
+
+## Project Structure
 
 ```
 Rag_AI_Assistant/
-├── app.py              # FastAPI REST API + Web UI
-├── ingest.py           # Document ingestion and indexing
-├── retriever.py        # RAG retrieval and generation
-├── config.py           # Configuration management
-├── requirements.txt    # Python dependencies
-├── templates/          # Web UI templates
-│   └── index.html      # Main web interface
-├── static/             # Static files (CSS, JS)
-│   ├── style.css       # Web UI styling
-│   └── script.js       # Web UI JavaScript
-├── Dockerfile          # Docker image definition
-├── docker-compose.yml  # Docker Compose configuration
-├── .gitignore          # Git ignore rules
-├── .dockerignore       # Docker ignore rules
-├── README.md           # This file
-├── DEPLOYMENT.md       # Deployment guide
-└── knowledge_data/     # Your documents go here
+├── app.py                  # FastAPI server — endpoints, auth, sessions
+├── auth.py                 # JWT logic, user loading, role guards
+├── retriever.py            # RAG chain, vector search, answer generation
+├── ingest.py               # Document + URL ingestion, FAISS index builder
+├── config.py               # Pydantic settings (reads .env)
+├── setup_env.py            # First-run helper: creates .env from template
+├── requirements.txt        # Python dependencies
+├── docker-compose.yml      # API + Redis stack
+├── Dockerfile
+├── templates/
+│   └── index.html          # Chat UI (login modal, sidebar, chat)
+├── static/
+│   ├── style.css
+│   └── script.js
+├── knowledge_data/         # Drop source documents here
+└── data/
+    ├── faiss_index.pkl     # Generated by ingest.py (not committed)
+    └── users.json          # User credentials (generated on first run)
 ```
-
-## 🧪 Testing
-
-```bash
-# Test API health
-curl http://localhost:8000/health
-
-# Test question endpoint
-curl -X POST http://localhost:8000/ask \
-  -H "Content-Type: application/json" \
-  -d '{"question": "Test question"}'
-```
-
-## 🔒 Security
-
-- ✅ Environment variables for secrets
-- ✅ `.gitignore` to prevent committing sensitive files
-- ✅ Input validation on API endpoints
-- ✅ Error handling without exposing internals
-- ✅ Multi-provider support for redundancy
-- ✅ Local embeddings fallback (no API dependency for embeddings)
-- ⚠️ **Production**: Restrict CORS origins, enable HTTPS, use firewall
-
-## 🤖 Supported AI Providers
-
-### Google Gemini (Recommended)
-- **Model**: `gemini-3-flash-preview` (default)
-- **Advantages**: Fast, cost-effective, good multilingual support
-- **Setup**: Get API key from https://ai.google.dev
-- **Status**: ✅ Currently configured and working
-
-### OpenAI
-- **Model**: `gpt-4o-mini` (default)
-- **Advantages**: High quality, reliable
-- **Setup**: Get API key from https://platform.openai.com
-- **Note**: Requires quota/billing for embeddings
-
-### DeepSeek
-- **Model**: `deepseek-chat` (default)
-- **Advantages**: Cost-effective alternative
-- **Setup**: Get API key from https://platform.deepseek.com
-- **Note**: Uses OpenAI for embeddings (DeepSeek doesn't provide embeddings API)
-
-### Embeddings
-- **Primary**: OpenAI embeddings (if API key available)
-- **Fallback**: Local HuggingFace embeddings (automatic if OpenAI quota exceeded)
-- **Model**: `paraphrase-multilingual-MiniLM-L12-v2` (supports English and Russian)
-
-### Session Storage
-- **Primary**: Redis (persistent, scalable, shared across instances)
-- **Fallback**: In-memory storage (automatic if Redis unavailable)
-- **TTL**: Sessions expire after 24 hours
-- **Setup**: See [REDIS_SETUP.md](REDIS_SETUP.md) for detailed instructions
-
-## 📝 API Endpoints
-
-### `GET /`
-Health check endpoint
-
-### `GET /health`
-Detailed health check with system status
-
-### `POST /ask`
-Ask a question
-
-**Request:**
-```json
-{
-  "question": "Your question here",
-  "user_id": "optional_user_id",
-  "session_id": "optional_session_id"
-}
-```
-
-**Response:**
-```json
-{
-  "answer": "Answer text",
-  "session_id": "session_uuid",
-  "sources": [...],
-  "confidence": 0.85,
-  "timestamp": "ISO timestamp"
-}
-```
-
-### `GET /sessions/{session_id}`
-Get session history
-
-### `DELETE /sessions/{session_id}`
-Delete a session
-
-## 🐛 Troubleshooting
-
-### Index file not found
-```bash
-python ingest.py  # Re-run ingestion
-```
-
-### API Provider Errors
-
-**OpenAI API errors:**
-- Verify API key is correct
-- Check API quota/limits
-- System will automatically fall back to local embeddings if quota exceeded
-
-**Gemini API errors:**
-- Verify API key is correct
-- Check quota at https://ai.dev/rate-limit
-- Try a different model (e.g., `gemini-2.0-flash`)
-
-**DeepSeek API errors:**
-- Verify API key is correct
-- Check account balance
-- Note: DeepSeek requires OpenAI API key for embeddings
-
-### Embeddings Issues
-- If OpenAI quota exceeded, system automatically uses local HuggingFace embeddings
-- Local embeddings require `sentence-transformers` package (installed automatically)
-- First run will download the model (~400MB)
-
-### Memory issues
-- Reduce `CHUNK_SIZE` and `TOP_K_RESULTS`
-- Use smaller embedding model
-- Consider FAISS-GPU for faster processing
-
-## 🚧 Future Enhancements
-
-- [x] Multi-provider support (OpenAI, DeepSeek, Gemini)
-- [x] Local embeddings fallback
-- [x] Web UI interface
-- [x] Redis for session storage
-- [ ] Advanced caching
-- [ ] Multi-tenant support
-- [ ] Analytics and usage tracking
-- [ ] Fine-tuning on domain-specific data
-- [ ] Additional embedding providers (Cohere, HuggingFace Inference API)
-
-## 📄 License
-
-[Your License Here]
-
-## 👥 Contributing
-
-[Your Contributing Guidelines Here]
-
-## 📧 Support
-
-For issues and questions, please open an issue in the repository.
 
 ---
 
-## 📊 Current System Status
+## Security Notes
 
-- ✅ **Knowledge Base**: 6 documents indexed (31 chunks)
-- ✅ **Embeddings**: Local HuggingFace (multilingual)
-- ✅ **LLM Provider**: Google Gemini (gemini-3-flash-preview)
-- ✅ **Vector Store**: FAISS index (457 MB)
-- ✅ **API Server**: FastAPI on port 8000
-- ✅ **Languages**: English and Russian supported
-
-## 🎓 Example Questions
-
-Try asking:
-- "When should I use a jump serve?"
-- "Что делать при счете 24-24?" (Russian)
-- "How do I decide when to substitute a player?"
-- "What are the responsibilities of a libero?"
-- "When should I call a timeout?"
+- **Change `JWT_SECRET`** before any internet-facing deployment. The default value is public.
+- **CORS** is currently `allow_origins=["*"]`. Restrict this to your frontend origin in production.
+- `data/users.json` stores bcrypt-hashed passwords and should not be committed (`data/` is in `.gitignore`).
+- `data/faiss_index.pkl` is a pickle file — only load indexes you generated yourself.
 
 ---
 
-**Built with**: Python, FastAPI, LangChain, Google Gemini, OpenAI, DeepSeek, FAISS, HuggingFace
+## Troubleshooting
+
+**Index not found on startup**
+```bash
+python ingest.py   # build the index first
+```
+
+**`langchain_google_genai` not found**
+```bash
+pip install langchain-google-genai
+```
+
+**Embeddings mismatch after switching providers**
+The ingest and query phases must use the same embedding model. After changing the embedding source, always re-run `ingest.py`.
+
+**Token expired in browser**
+The page automatically redirects to the login screen on a 401. Re-login to continue.
+
+**Redis not connecting**
+The server falls back to in-memory session storage automatically. Sessions will be lost on restart but the chat still works.

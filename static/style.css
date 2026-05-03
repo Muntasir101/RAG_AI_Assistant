@@ -737,3 +737,197 @@ body {
 @media (min-width: 1400px) {
   :root { --sidebar-w: 290px; }
 }
+
+/* ── Login Overlay ────────────────────── */
+.login-overlay {
+  position: fixed;
+  inset: 0;
+  background: linear-gradient(135deg, #151929 0%, #1e2340 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+}
+
+.login-card {
+  background: white;
+  border-radius: 20px;
+  padding: 40px 36px 32px;
+  width: 100%;
+  max-width: 380px;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.45);
+}
+
+.login-logo {
+  text-align: center;
+  margin-bottom: 28px;
+}
+.login-logo svg {
+  display: block;
+  margin: 0 auto 12px;
+}
+.login-logo h2 {
+  font-size: 1.4rem;
+  font-weight: 700;
+  color: #1a1d2e;
+  margin-bottom: 4px;
+}
+.login-logo p {
+  font-size: 0.85rem;
+  color: #64748b;
+}
+
+.form-field { margin-bottom: 16px; }
+.form-field label {
+  display: block;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: #374151;
+  margin-bottom: 6px;
+}
+.form-field input {
+  width: 100%;
+  padding: 10px 14px;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 10px;
+  font-size: 0.9rem;
+  font-family: inherit;
+  color: #1a1d2e;
+  background: white;
+  transition: border-color var(--tr), box-shadow var(--tr);
+  outline: none;
+}
+.form-field input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(88, 101, 242, 0.1);
+}
+
+.login-error {
+  color: #dc2626;
+  font-size: 0.8rem;
+  min-height: 18px;
+  margin-bottom: 10px;
+  text-align: center;
+}
+
+.login-btn {
+  width: 100%;
+  padding: 11px;
+  background: var(--accent);
+  color: white;
+  border: none;
+  border-radius: 10px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background var(--tr), transform 0.1s;
+}
+.login-btn:hover:not(:disabled) { background: var(--accent-hover); }
+.login-btn:active:not(:disabled) { transform: scale(0.98); }
+.login-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+
+.login-hint {
+  text-align: center;
+  font-size: 0.75rem;
+  color: #94a3b8;
+  margin-top: 16px;
+}
+.login-hint strong { color: #64748b; }
+
+/* ── User pill (topbar) ───────────────── */
+.user-pill {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.user-name {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: #374151;
+  white-space: nowrap;
+}
+
+.role-tag {
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 20px;
+  text-transform: capitalize;
+  white-space: nowrap;
+}
+.role-tag.admin { background: #eff6ff; color: #2563eb; }
+.role-tag.user  { background: #f0fdf4; color: #16a34a; }
+
+.logout-btn {
+  font-size: 0.78rem;
+  color: #64748b;
+  background: none;
+  border: 1.5px solid #e2e8f0;
+  padding: 4px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: all var(--tr);
+  white-space: nowrap;
+}
+.logout-btn:hover { background: #fef2f2; border-color: #fca5a5; color: #dc2626; }
+
+/* ── URL Ingest (sidebar) ─────────────── */
+.url-ingest {
+  padding: 10px 12px 12px;
+  border-top: 1px solid var(--sb-border);
+  flex-shrink: 0;
+}
+
+.url-input-row {
+  display: flex;
+  gap: 6px;
+}
+
+.url-text-input {
+  flex: 1;
+  min-width: 0;
+  background: var(--sb-hover);
+  border: 1px solid var(--sb-border);
+  border-radius: 8px;
+  padding: 7px 10px;
+  font-size: 0.78rem;
+  color: var(--sb-text-hi);
+  font-family: inherit;
+  outline: none;
+  transition: border-color var(--tr);
+}
+.url-text-input::placeholder { color: var(--sb-text-dim); }
+.url-text-input:focus { border-color: var(--accent); }
+
+.url-add-btn {
+  background: var(--accent);
+  color: white;
+  border: none;
+  border-radius: 8px;
+  padding: 7px 12px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background var(--tr);
+  flex-shrink: 0;
+}
+.url-add-btn:hover { background: var(--accent-hover); }
+.url-add-btn:disabled { opacity: 0.55; cursor: not-allowed; }
+
+.url-error {
+  font-size: 0.72rem;
+  color: #ef4444;
+  margin-top: 6px;
+  line-height: 1.45;
+  min-height: 0;
+}
+
+/* ── Mobile login card ────────────────── */
+@media (max-width: 480px) {
+  .login-card { padding: 32px 24px 28px; border-radius: 16px; }
+}

@@ -5,20 +5,22 @@ Provides REST API endpoints for question-answering with session management
 import asyncio
 import json
 import logging
+import re
 import sys
 import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, Optional
 
-from fastapi import FastAPI, File, HTTPException, UploadFile, status
+from fastapi import Depends, FastAPI, File, HTTPException, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from retriever import get_answer
+from auth import TokenUser, authenticate_user, create_access_token, get_current_user, require_admin
 from config import settings
+from retriever import get_answer
 
 # Redis import with fallback
 try:
@@ -38,39 +40,34 @@ logger = logging.getLogger(__name__)
 # Initialize FastAPI app
 app = FastAPI(
     title="RAG AI Decision Assistant API",
-    description="AI decision assistant for volleyball athletes using RAG",
+    description="AI decision assistant powered by a custom knowledge base (RAG)",
     version="1.0.0"
 )
 
-# Mount static files and templates
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, specify allowed origins
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Redis client (with fallback to in-memory)
+# ── Redis / session storage ──────────────────────────────────────────────────
+
 _redis_client = None
-_redis_unavailable = False  # Set True after first failure to skip retries
-_fallback_sessions: Dict[str, Dict] = {}  # Fallback if Redis unavailable
-SESSION_TTL = 86400  # 24 hours in seconds
+_redis_unavailable = False
+_fallback_sessions: Dict[str, Dict] = {}
+SESSION_TTL = 86400  # 24 hours
 
 
 def get_redis_client():
-    """Get or create Redis client"""
     global _redis_client, _redis_unavailable
-
     if not REDIS_AVAILABLE or _redis_unavailable:
         return None
-
     if _redis_client is not None:
         return _redis_client
-
     try:
         _redis_client = redis.Redis(
             host=settings.redis_host,
@@ -82,84 +79,73 @@ def get_redis_client():
             socket_connect_timeout=2,
             socket_timeout=2,
         )
-        # Test connection
         _redis_client.ping()
         logger.info(f"Connected to Redis at {settings.redis_host}:{settings.redis_port}")
         return _redis_client
     except Exception as e:
-        logger.warning(f"Redis connection failed: {str(e)}. Using in-memory storage.")
+        logger.warning(f"Redis connection failed: {e}. Using in-memory storage.")
         _redis_client = None
         _redis_unavailable = True
         return None
 
 
 def get_session(session_id: str) -> Optional[Dict]:
-    """Get session from Redis or fallback storage"""
-    redis_client = get_redis_client()
-    
-    if redis_client:
+    rc = get_redis_client()
+    if rc:
         try:
-            data = redis_client.get(f"session:{session_id}")
+            data = rc.get(f"session:{session_id}")
             if data:
                 return json.loads(data)
         except Exception as e:
-            logger.error(f"Error reading from Redis: {str(e)}")
-            # Fallback to in-memory
-            return _fallback_sessions.get(session_id)
-    else:
-        return _fallback_sessions.get(session_id)
+            logger.error(f"Redis read error: {e}")
+    return _fallback_sessions.get(session_id)
 
 
 def save_session(session_id: str, session_data: Dict) -> None:
-    """Save session to Redis or fallback storage"""
-    redis_client = get_redis_client()
-    
-    if redis_client:
+    rc = get_redis_client()
+    if rc:
         try:
-            redis_client.setex(
-                f"session:{session_id}",
-                SESSION_TTL,
-                json.dumps(session_data)
-            )
+            rc.setex(f"session:{session_id}", SESSION_TTL, json.dumps(session_data))
+            return
         except Exception as e:
-            logger.error(f"Error writing to Redis: {str(e)}")
-            # Fallback to in-memory
-            _fallback_sessions[session_id] = session_data
-    else:
-        _fallback_sessions[session_id] = session_data
+            logger.error(f"Redis write error: {e}")
+    _fallback_sessions[session_id] = session_data
 
 
 def delete_session(session_id: str) -> bool:
-    """Delete session from Redis or fallback storage"""
-    redis_client = get_redis_client()
-    
-    if redis_client:
+    rc = get_redis_client()
+    if rc:
         try:
-            deleted = redis_client.delete(f"session:{session_id}")
-            return deleted > 0
+            return rc.delete(f"session:{session_id}") > 0
         except Exception as e:
-            logger.error(f"Error deleting from Redis: {str(e)}")
-            # Fallback to in-memory
-            if session_id in _fallback_sessions:
-                del _fallback_sessions[session_id]
-                return True
-            return False
-    else:
-        if session_id in _fallback_sessions:
-            del _fallback_sessions[session_id]
-            return True
-        return False
+            logger.error(f"Redis delete error: {e}")
+    if session_id in _fallback_sessions:
+        del _fallback_sessions[session_id]
+        return True
+    return False
+
+
+# ── Pydantic models ──────────────────────────────────────────────────────────
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class LoginResponse(BaseModel):
+    access_token: str
+    token_type: str
+    username: str
+    role: str
 
 
 class QueryRequest(BaseModel):
-    """Request model for asking questions"""
     user_id: Optional[str] = Field(None, description="User identifier")
-    question: str = Field(..., min_length=1, max_length=1000, description="User's question")
-    session_id: Optional[str] = Field(None, description="Session identifier for conversation tracking")
+    question: str = Field(..., min_length=1, max_length=1000)
+    session_id: Optional[str] = Field(None, description="Session identifier")
 
 
 class QueryResponse(BaseModel):
-    """Response model for answers"""
     answer: str
     session_id: str
     sources: list
@@ -168,175 +154,157 @@ class QueryResponse(BaseModel):
 
 
 class HealthResponse(BaseModel):
-    """Health check response"""
     status: str
     message: str
     timestamp: str
 
 
-def get_or_create_session(session_id: Optional[str] = None) -> str:
-    """
-    Get existing session or create a new one
-    
-    Args:
-        session_id: Optional existing session ID
-        
-    Returns:
-        Session ID string
-    """
-    if session_id:
-        existing_session = get_session(session_id)
-        if existing_session:
-            return session_id
-    
-    new_session_id = str(uuid.uuid4())
-    session_data = {
-        "created_at": datetime.utcnow().isoformat(),
-        "messages": []
-    }
-    save_session(new_session_id, session_data)
-    return new_session_id
+class IngestUrlRequest(BaseModel):
+    url: str = Field(..., description="HTTP/HTTPS URL to fetch and add to the knowledge base")
 
+
+# ── Auth endpoints ───────────────────────────────────────────────────────────
+
+@app.post("/auth/login", response_model=LoginResponse, tags=["auth"])
+async def login(body: LoginRequest):
+    """Authenticate and receive a JWT bearer token."""
+    user = authenticate_user(body.username, body.password)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid username or password",
+        )
+    token = create_access_token(user["username"], user["role"])
+    logger.info(f"User '{user['username']}' logged in")
+    return LoginResponse(
+        access_token=token,
+        token_type="bearer",
+        username=user["username"],
+        role=user["role"],
+    )
+
+
+@app.get("/auth/me", tags=["auth"])
+async def me(current_user: TokenUser = Depends(get_current_user)):
+    """Return the currently authenticated user's info."""
+    return {"username": current_user.username, "role": current_user.role}
+
+
+# ── Public endpoints ─────────────────────────────────────────────────────────
 
 @app.get("/")
 async def home():
-    """Serve the web UI"""
     return FileResponse("templates/index.html")
-
-@app.get("/api/health", response_model=HealthResponse)
-async def health_check_api():
-    """Health check endpoint (API)"""
-    return {
-        "status": "healthy",
-        "message": "RAG AI Decision Assistant API is running ✅",
-        "timestamp": datetime.utcnow().isoformat()
-    }
 
 
 @app.get("/health", response_model=HealthResponse)
 async def health_check():
-    """Detailed health check endpoint"""
     try:
-        # Try to load the vector store to verify system is ready
         from retriever import load_vector_store
         load_vector_store()
-        
-        # Check Redis connection
-        redis_status = "not configured (using in-memory)"
-        redis_client = get_redis_client()
-        if redis_client:
+        rc = get_redis_client()
+        if rc:
             try:
-                redis_client.ping()
+                rc.ping()
                 redis_status = "connected"
             except Exception as e:
-                redis_status = f"disconnected: {str(e)} (using fallback)"
-        
+                redis_status = f"disconnected: {e} (using fallback)"
+        else:
+            redis_status = "not configured (using in-memory)"
         return {
             "status": "healthy",
             "message": f"System is operational. Knowledge base loaded. Redis: {redis_status}",
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": datetime.utcnow().isoformat(),
         }
     except Exception as e:
-        logger.error(f"Health check failed: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"System not ready: {str(e)}"
-        )
+        logger.error(f"Health check failed: {e}")
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=f"System not ready: {e}")
+
+
+@app.get("/api/health", response_model=HealthResponse)
+async def health_check_api():
+    return {
+        "status": "healthy",
+        "message": "RAG AI Decision Assistant API is running",
+        "timestamp": datetime.utcnow().isoformat(),
+    }
+
+
+# ── Authenticated endpoints ──────────────────────────────────────────────────
+
+def _get_or_create_session(session_id: Optional[str]) -> str:
+    if session_id:
+        if get_session(session_id):
+            return session_id
+    new_id = str(uuid.uuid4())
+    save_session(new_id, {"created_at": datetime.utcnow().isoformat(), "messages": []})
+    return new_id
 
 
 @app.post("/ask", response_model=QueryResponse)
-async def ask(query: QueryRequest):
-    """
-    Main endpoint for asking questions
-    
-    Args:
-        query: Query request with question and optional session info
-        
-    Returns:
-        QueryResponse with answer, sources, and metadata
-        
-    Raises:
-        HTTPException: If processing fails
-    """
-    try:
-        # Validate question
-        if not query.question or not query.question.strip():
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Question cannot be empty"
-            )
-        
-        # Get or create session
-        session_id = get_or_create_session(query.session_id)
-        
-        # Get answer from RAG system
-        logger.info(f"Processing question for session {session_id}")
-        result = get_answer(query.question, user_id=query.user_id or session_id)
-        
-        # Update session history
-        session_data = get_session(session_id) or {
-            "created_at": datetime.utcnow().isoformat(),
-            "messages": []
-        }
-        session_data["messages"].append({
-            "question": query.question,
-            "answer": result["answer"],
-            "timestamp": datetime.utcnow().isoformat()
-        })
-        session_data["updated_at"] = datetime.utcnow().isoformat()
-        save_session(session_id, session_data)
-        
-        # Return structured response
-        return QueryResponse(
-            answer=result["answer"],
-            session_id=session_id,
-            sources=result.get("sources", []),
-            confidence=result.get("confidence", 0.0),
-            timestamp=datetime.utcnow().isoformat()
-        )
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error processing question: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error processing question: {str(e)}"
-        )
+async def ask(
+    query: QueryRequest,
+    current_user: TokenUser = Depends(get_current_user),
+):
+    """Ask a question; answers come exclusively from the knowledge base."""
+    if not query.question.strip():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Question cannot be empty")
+
+    session_id = _get_or_create_session(query.session_id)
+
+    session_data = get_session(session_id) or {
+        "created_at": datetime.utcnow().isoformat(),
+        "messages": [],
+    }
+    chat_history = session_data.get("messages", [])
+
+    logger.info(f"User '{current_user.username}' | session {session_id} | question: {query.question[:80]}")
+    result = get_answer(
+        query.question,
+        chat_history=chat_history,
+        user_id=current_user.username,
+    )
+
+    session_data["messages"].append({
+        "question": query.question,
+        "answer": result["answer"],
+        "timestamp": datetime.utcnow().isoformat(),
+    })
+    session_data["updated_at"] = datetime.utcnow().isoformat()
+    save_session(session_id, session_data)
+
+    return QueryResponse(
+        answer=result["answer"],
+        session_id=session_id,
+        sources=result.get("sources", []),
+        confidence=result.get("confidence", 0.0),
+        timestamp=datetime.utcnow().isoformat(),
+    )
 
 
 @app.get("/sessions/{session_id}")
-async def get_session_endpoint(session_id: str):
-    """Get session history"""
-    session_data = get_session(session_id)
-    
-    if not session_data:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Session not found"
-        )
-    
-    return session_data
+async def get_session_endpoint(
+    session_id: str,
+    _: TokenUser = Depends(get_current_user),
+):
+    data = get_session(session_id)
+    if not data:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+    return data
 
 
 @app.delete("/sessions/{session_id}")
-async def delete_session_endpoint(session_id: str):
-    """Delete a session"""
-    deleted = delete_session(session_id)
-    
-    if deleted:
+async def delete_session_endpoint(
+    session_id: str,
+    _: TokenUser = Depends(get_current_user),
+):
+    if delete_session(session_id):
         return {"message": "Session deleted successfully"}
-    else:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Session not found"
-        )
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
 
-
-_ALLOWED_EXTS = {".pdf", ".docx", ".txt", ".md"}
 
 @app.get("/files")
-async def list_files():
+async def list_files(_: TokenUser = Depends(get_current_user)):
     data_dir = Path(settings.data_dir)
     files = []
     if data_dir.exists():
@@ -345,13 +313,21 @@ async def list_files():
                 files.append({
                     "name": f.name,
                     "size": f.stat().st_size,
-                    "type": f.suffix.lower().lstrip(".")
+                    "type": f.suffix.lower().lstrip("."),
                 })
     return {"files": files}
 
 
+# ── Admin-only endpoints ─────────────────────────────────────────────────────
+
+_ALLOWED_EXTS = {".pdf", ".docx", ".txt", ".md"}
+
+
 @app.post("/upload")
-async def upload_file(file: UploadFile = File(...)):
+async def upload_file(
+    file: UploadFile = File(...),
+    _: TokenUser = Depends(require_admin),
+):
     ext = Path(file.filename).suffix.lower()
     if ext not in _ALLOWED_EXTS:
         raise HTTPException(status_code=400, detail=f"Unsupported type '{ext}'. Allowed: PDF, DOCX, TXT, MD")
@@ -360,32 +336,61 @@ async def upload_file(file: UploadFile = File(...)):
     dest = Path(settings.data_dir) / file.filename
     content = await file.read()
     dest.write_bytes(content)
-    logger.info(f"Uploaded {file.filename} ({len(content):,} bytes)")
+    logger.info(f"Admin uploaded {file.filename} ({len(content):,} bytes)")
     return {"filename": file.filename, "size": len(content)}
 
 
 @app.delete("/files/{filename}")
-async def delete_file(filename: str):
+async def delete_file(
+    filename: str,
+    _: TokenUser = Depends(require_admin),
+):
     if "/" in filename or "\\" in filename or ".." in filename:
         raise HTTPException(status_code=400, detail="Invalid filename")
     path = Path(settings.data_dir) / filename
     if not path.exists():
         raise HTTPException(status_code=404, detail="File not found")
     path.unlink()
-    logger.info(f"Deleted {filename}")
+    logger.info(f"Admin deleted {filename}")
     return {"message": f"{filename} deleted"}
+
+
+@app.post("/ingest-url")
+async def ingest_url(
+    body: IngestUrlRequest,
+    _: TokenUser = Depends(require_admin),
+):
+    """Fetch a web page, save its text to the knowledge base, and mark KB as stale."""
+    from ingest import fetch_url_text
+
+    if not body.url.startswith(("http://", "https://")):
+        raise HTTPException(status_code=400, detail="URL must start with http:// or https://")
+
+    try:
+        text = fetch_url_text(body.url)
+    except Exception as e:
+        logger.error(f"URL ingest failed for {body.url}: {e}")
+        raise HTTPException(status_code=400, detail=f"Failed to fetch URL: {e}")
+
+    # Derive a safe filename from the URL
+    slug = re.sub(r"[^\w.-]", "_", body.url.split("//")[-1])[:80]
+    filename = f"web_{slug}.txt"
+    dest = Path(settings.data_dir) / filename
+    dest.write_text(text, encoding="utf-8")
+    logger.info(f"Saved URL content as {filename} ({len(text):,} chars)")
+    return {"filename": filename, "size": len(text)}
 
 
 _reindex_state: Dict = {"status": "idle", "message": ""}
 
 
 @app.get("/reindex/status")
-async def reindex_status():
+async def reindex_status(_: TokenUser = Depends(require_admin)):
     return _reindex_state
 
 
 @app.post("/reindex")
-async def trigger_reindex():
+async def trigger_reindex(_: TokenUser = Depends(require_admin)):
     global _reindex_state
     if _reindex_state["status"] == "running":
         raise HTTPException(status_code=409, detail="Reindex already in progress")
@@ -401,18 +406,23 @@ async def _run_reindex():
             sys.executable, "ingest.py",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            cwd=str(Path(__file__).parent)
+            cwd=str(Path(__file__).parent),
         )
-        _, stderr = await proc.communicate()
+        stdout, stderr = await proc.communicate()
+        
         if proc.returncode == 0:
+            # Force reload the retriever in the current process
             import retriever
+            # Clear both the store and the chain to force a full reload on next query
             retriever._vector_store = None
             retriever._qa_chain = None
+            
             _reindex_state = {"status": "done", "message": "Knowledge base rebuilt successfully"}
-            logger.info("Reindex completed")
+            logger.info("Reindex completed and retriever state cleared")
         else:
-            _reindex_state = {"status": "error", "message": stderr.decode()[:400]}
-            logger.error(f"Reindex failed: {stderr.decode()}")
+            error_msg = stderr.decode() if stderr else "Unknown error during ingestion"
+            _reindex_state = {"status": "error", "message": error_msg[:400]}
+            logger.error(f"Reindex failed: {error_msg}")
     except Exception as e:
         _reindex_state = {"status": "error", "message": str(e)}
         logger.error(f"Reindex error: {e}")
@@ -420,9 +430,4 @@ async def _run_reindex():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(
-        "app:app",
-        host=settings.api_host,
-        port=settings.api_port,
-        reload=True
-    )
+    uvicorn.run("app:app", host=settings.api_host, port=settings.api_port, reload=True)
